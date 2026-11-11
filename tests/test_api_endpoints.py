@@ -56,3 +56,17 @@ def test_routes():
     # 8. API Set Empty SteamID
     res_set_empty = client.post("/api/user/set-steamid", json={"steam_id_or_url": ""})
     assert res_set_empty.status_code == 400
+
+    # 9. API Search (prueba con término vacío)
+    res_search_empty = client.get("/api/search?q=")
+    assert res_search_empty.status_code == 200
+    assert json.loads(res_search_empty.data)["results"] == []
+
+    # 10. API Inspect Game (sin parámetro -> 400)
+    res_inspect_empty = client.get("/api/game/inspect")
+    assert res_inspect_empty.status_code == 400
+
+    # 11. API Inspect Game (con URL de Steam no válida)
+    res_inspect_bad = client.get("/api/game/inspect?target=not_an_app")
+    assert res_inspect_bad.status_code == 200
+    assert "error" in json.loads(res_inspect_bad.data)

@@ -2,7 +2,7 @@ import os
 import json
 from flask import Flask, render_template, request, redirect, session, jsonify, Response, url_for
 from app.config import settings, get_active_steam_api_key, update_env_api_key
-from app.db import init_db, save_user_wishlist, save_user_library, set_setting, get_setting
+from app.db import init_db, save_user_wishlist, save_user_library, set_setting, get_setting, save_games_batch, save_game
 from app.auth import build_steam_login_url, validate_steam_login
 from app.calendar_service import CalendarService
 from app.steam_client import SteamClient
@@ -77,15 +77,19 @@ def logout():
 @app.route("/api/calendar")
 def api_calendar():
     """API endpoint que devuelve la estructura completa día a día."""
-    steam_id = session.get("steam_id") or request.args.get("steam_id")
-    include_past = request.args.get("include_past", "0") in ["1", "true", "True"]
-    data = calendar_service.get_personal_calendar(steam_id=steam_id, include_past=include_past)
-    return jsonify(data)
+    try:
+        steam_id = session.get("steam_id") or request.args.get("steam_id")
+        include_past = request.args.get("include_past", "0") in ["1", "true", "True"]
+        data = calendar_service.get_personal_calendar(steam_id=steam_id, include_past=include_past)
+        return jsonify(data)
+    except Exception as e:
+        app.logger.error(f"Error procesando calendario: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
 
 @app.route("/api/calendar/sync", methods=["POST"])
 def api_sync():
-    """Fuerza la sincronización con los servidores de Steam limpiando la caché previa."""
-    games = calendar_service.sync_upcoming_games(clear_first=True)
+    """Fuerza la sincronización con los servidores de Steam actualizando la base de datos."""
+    games = calendar_service.sync_upcoming_games(clear_first=False)
     steam_id = session.get("steam_id")
     if steam_id:
         client = SteamClient()
@@ -99,6 +103,34 @@ def api_sync():
         if library_games:
             save_user_library(steam_id, library_games)
     return jsonify({"success": True, "count": len(games)})
+
+@app.route("/api/search")
+def api_search():
+    """Busca juegos en Steam mediante nombre o appid y los almacena en el calendario."""
+    query = request.args.get("q", "").strip()
+    if not query:
+        return jsonify({"results": []})
+    client = SteamClient()
+    games = client.search_games(query)
+    if games:
+        save_games_batch(games)
+    return jsonify({"results": games})
+
+@app.route("/api/game/inspect")
+def api_inspect_game():
+    """Inspecciona dinámicamente cualquier juego de Steam (por AppID o URL) y obtiene su fecha exacta y categoría."""
+    target = request.args.get("target") or request.args.get("url") or request.args.get("appid", "")
+    target = target.strip()
+    if not target:
+        return jsonify({"error": "Parámetro 'target' requerido (URL o AppID)."}), 400
+    client = SteamClient()
+    info = client.get_game_release_info(target)
+    if isinstance(info, dict) and info.get("appid"):
+        try:
+            save_game(info)
+        except Exception:
+            pass
+    return jsonify(info)
 
 @app.route("/api/calendar/export.ics")
 def api_export_ics():

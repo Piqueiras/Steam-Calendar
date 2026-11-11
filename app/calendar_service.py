@@ -36,14 +36,14 @@ class CalendarService:
     def __init__(self, api_key: Optional[str] = None):
         self.steam_client = SteamClient(api_key=api_key)
 
-    def sync_upcoming_games(self, clear_first: bool = False) -> List[Dict[str, Any]]:
+    def sync_upcoming_games(self, clear_first: bool = False, max_items: int = 2500) -> List[Dict[str, Any]]:
         """Sincroniza y guarda los lanzamientos reales de Steam en SQLite."""
         if clear_first:
             clear_all_games()
         else:
             clear_sample_data()
 
-        games = self.steam_client.fetch_popular_upcoming(max_items=150)
+        games = self.steam_client.fetch_popular_upcoming(max_items=max_items)
         if games:
             save_games_batch(games)
         return games
@@ -72,11 +72,18 @@ class CalendarService:
             library_games = get_user_library_games(steam_id)
             user_owned_appids = set(g["appid"] for g in library_games)
 
-            # Si el usuario tiene deseados, sincronizar detalles para asegurar que sus fechas exactas están en DB
+            # Si el usuario tiene deseados, sincronizar detalles para asegurar que sus fechas exactas y categorías están en DB
             if wishlist_ids:
                 missing_wishlist_appids = [aid for aid in wishlist_ids if not any(g["appid"] == aid for g in cached_games)]
-                if missing_wishlist_appids:
-                    wishlist_games = self.steam_client.fetch_wishlist_games_details(missing_wishlist_appids)
+                stale_wishlist_appids = [
+                    g["appid"] for g in cached_games 
+                    if g["appid"] in wishlist_ids and (
+                        g.get("tags") in [["Juego en Seguimiento"], ["Próximo Estreno"], []]
+                    )
+                ][:50]
+                to_fetch = list(set(missing_wishlist_appids + stale_wishlist_appids))
+                if to_fetch:
+                    wishlist_games = self.steam_client.fetch_wishlist_games_details(to_fetch)
                     if wishlist_games:
                         save_games_batch(wishlist_games)
                         cached_games = get_cached_games()
@@ -86,10 +93,6 @@ class CalendarService:
         fuzzy_list: List[Dict[str, Any]] = []
 
         for g in cached_games:
-            # Si el usuario ha cerrado sesión, no mostrar juegos que solo procedían de su lista privada
-            if not steam_id and g.get("source") == "WISHLIST_API":
-                continue
-
             game_item = dict(g)
             appid = game_item["appid"]
 
@@ -102,9 +105,28 @@ class CalendarService:
 
             is_wishlisted = appid in wishlist_ids
 
+            # Normalización y detección de la categoría del lanzamiento
+            rel_cat = game_item.get("release_category")
+            is_ea = bool(game_item.get("is_early_access"))
+            if is_dlc:
+                rel_cat = "DLC"
+            elif not rel_cat or rel_cat not in ["RELEASE_1_0", "FIRST_RELEASE", "DLC"]:
+                tags_str = str(game_item.get("tags", [])).lower()
+                name_str = str(game_item.get("name", "")).lower()
+                is_ea = is_ea or "early access" in tags_str or "acceso anticipado" in tags_str
+                if "1.0" in name_str or "lanzamiento 1.0" in tags_str or "full release" in name_str:
+                    rel_cat = "RELEASE_1_0"
+                else:
+                    rel_cat = "FIRST_RELEASE"
+
             game_item["is_wishlisted"] = is_wishlisted
             game_item["is_dlc"] = is_dlc
             game_item["is_owned_base_game"] = is_dlc_owned
+            game_item["release_category"] = rel_cat
+            game_item["is_early_access"] = is_ea
+            game_item["review_score_label"] = game_item.get("review_score_label")
+            game_item["review_percent"] = game_item.get("review_percent")
+            game_item["review_count"] = game_item.get("review_count")
             game_item["steam_store_url"] = f"https://store.steampowered.com/app/{appid}/"
 
             cal_date_str = game_item.get("calendar_date")
@@ -117,14 +139,13 @@ class CalendarService:
                     if not include_past and dt_val < today:
                         continue
 
-                    # Ventana válida: si include_past es True, permite desde hace 14 días
+                    # Ventana válida: si include_past es True, permite lanzamientos desde hace 14 días
                     min_date = (today - datetime.timedelta(days=14)) if include_past else today
                     if dt_val >= min_date:
                         if cal_date_str not in days_map:
                             days_map[cal_date_str] = []
                         days_map[cal_date_str].append(game_item)
-                    elif include_past:
-                        fuzzy_list.append(game_item)
+                    # Juegos lanzados hace más de 14 días se descartan (no saturan la bandeja)
                 except ValueError:
                     fuzzy_list.append(game_item)
             else:
@@ -153,8 +174,14 @@ class CalendarService:
             x.get("display_badge", "")
         ))
 
+        all_games = [g for d in timeline_days for g in d["games"]] + sorted_fuzzy
+        total_release_1_0 = sum(1 for g in all_games if g.get("release_category") == "RELEASE_1_0")
+        total_first_release = sum(1 for g in all_games if g.get("release_category") == "FIRST_RELEASE")
+        total_dlc = sum(1 for g in all_games if g.get("is_owned_base_game"))
+
         return {
             "today_iso": today.isoformat(),
+            "is_authenticated": bool(steam_id),
             "timeline_days": timeline_days,
             "fuzzy_tray": sorted_fuzzy,
             "stats": {
@@ -162,7 +189,10 @@ class CalendarService:
                 "total_exact_games": sum(len(d["games"]) for d in timeline_days),
                 "total_fuzzy_games": len(sorted_fuzzy),
                 "wishlist_count": len(wishlist_ids),
-                "library_count": len(library_games)
+                "library_count": len(library_games),
+                "dlc_count": total_dlc,
+                "release_1_0_count": total_release_1_0,
+                "first_release_count": total_first_release
             }
         }
 

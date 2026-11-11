@@ -49,6 +49,56 @@
     color: #cbd5e1;
 }
 
+.badge-release-10 {
+    background: linear-gradient(135deg, #b45309, #d97706);
+    color: #ffffff;
+    font-weight: 700;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+
+.badge-release-first {
+    background: linear-gradient(135deg, #0f766e, #0d9488);
+    color: #ffffff;
+    font-weight: 700;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+
+/* Puntuación de Reseñas estilo Steam */
+.review-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.2rem 0.5rem;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 500;
+    line-height: 1.2;
+}
+
+.review-positive {
+    background: rgba(102, 192, 244, 0.12);
+    border: 1px solid rgba(102, 192, 244, 0.35);
+    color: #66c0f4;
+}
+
+.review-mixed {
+    background: rgba(212, 175, 55, 0.12);
+    border: 1px solid rgba(212, 175, 55, 0.35);
+    color: #eab308;
+}
+
+.review-negative {
+    background: rgba(248, 113, 113, 0.12);
+    border: 1px solid rgba(248, 113, 113, 0.35);
+    color: #f87171;
+}
+
+.review-none {
+    background: rgba(148, 163, 184, 0.08);
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    color: #94a3b8;
+}
+
 .filter-btn.active {
     background-color: #2a475e !important;
     color: #ffffff !important;

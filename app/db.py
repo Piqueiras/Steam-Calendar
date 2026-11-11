@@ -31,6 +31,11 @@ def init_db() -> None:
             deck_status TEXT DEFAULT 'UNKNOWN',
             item_type TEXT DEFAULT 'GAME',
             parent_appid INTEGER DEFAULT NULL,
+            release_category TEXT DEFAULT 'FIRST_RELEASE',
+            is_early_access INTEGER DEFAULT 0,
+            review_score_label TEXT DEFAULT NULL,
+            review_percent INTEGER DEFAULT NULL,
+            review_count INTEGER DEFAULT NULL,
             source TEXT DEFAULT 'POPULAR',
             updated_at INTEGER NOT NULL
         )
@@ -43,6 +48,32 @@ def init_db() -> None:
             pass
         try:
             cursor.execute("ALTER TABLE games ADD COLUMN parent_appid INTEGER DEFAULT NULL")
+        except Exception:
+            pass
+        try:
+            cursor.execute("ALTER TABLE games ADD COLUMN release_category TEXT DEFAULT 'FIRST_RELEASE'")
+        except Exception:
+            pass
+        try:
+            cursor.execute("ALTER TABLE games ADD COLUMN is_early_access INTEGER DEFAULT 0")
+        except Exception:
+            pass
+        try:
+            cursor.execute("ALTER TABLE games ADD COLUMN review_score_label TEXT DEFAULT NULL")
+        except Exception:
+            pass
+        try:
+            cursor.execute("ALTER TABLE games ADD COLUMN review_percent INTEGER DEFAULT NULL")
+        except Exception:
+            pass
+        try:
+            cursor.execute("ALTER TABLE games ADD COLUMN review_count INTEGER DEFAULT NULL")
+        except Exception:
+            pass
+
+        # Backfill inicial seguro para categorización en datos existentes
+        try:
+            cursor.execute("UPDATE games SET release_category = 'DLC' WHERE item_type = 'DLC' OR parent_appid IS NOT NULL")
         except Exception:
             pass
         
@@ -94,8 +125,10 @@ def save_game(game_data: Dict[str, Any]) -> None:
         cursor.execute("""
         INSERT INTO games (
             appid, name, raw_date_str, calendar_date, precision, display_badge,
-            header_image, capsule_image, tags, price_str, is_free, deck_status, item_type, parent_appid, source, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            header_image, capsule_image, tags, price_str, is_free, deck_status, item_type, parent_appid,
+            release_category, is_early_access, review_score_label, review_percent, review_count,
+            source, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(appid) DO UPDATE SET
             name=excluded.name,
             raw_date_str=excluded.raw_date_str,
@@ -110,6 +143,11 @@ def save_game(game_data: Dict[str, Any]) -> None:
             deck_status=excluded.deck_status,
             item_type=excluded.item_type,
             parent_appid=excluded.parent_appid,
+            release_category=excluded.release_category,
+            is_early_access=excluded.is_early_access,
+            review_score_label=excluded.review_score_label,
+            review_percent=excluded.review_percent,
+            review_count=excluded.review_count,
             source=excluded.source,
             updated_at=excluded.updated_at
         """, (
@@ -127,6 +165,11 @@ def save_game(game_data: Dict[str, Any]) -> None:
             game_data.get("deck_status", "UNKNOWN"),
             game_data.get("item_type", "GAME"),
             game_data.get("parent_appid"),
+            game_data.get("release_category", "FIRST_RELEASE"),
+            1 if game_data.get("is_early_access") else 0,
+            game_data.get("review_score_label"),
+            game_data.get("review_percent"),
+            game_data.get("review_count"),
             game_data.get("source", "POPULAR"),
             int(time.time())
         ))
@@ -142,8 +185,10 @@ def save_games_batch(games_list: List[Dict[str, Any]]) -> None:
             cursor.execute("""
             INSERT INTO games (
                 appid, name, raw_date_str, calendar_date, precision, display_badge,
-                header_image, capsule_image, tags, price_str, is_free, deck_status, item_type, parent_appid, source, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                header_image, capsule_image, tags, price_str, is_free, deck_status, item_type, parent_appid,
+                release_category, is_early_access, review_score_label, review_percent, review_count,
+                source, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(appid) DO UPDATE SET
                 name=excluded.name,
                 raw_date_str=excluded.raw_date_str,
@@ -158,6 +203,11 @@ def save_games_batch(games_list: List[Dict[str, Any]]) -> None:
                 deck_status=excluded.deck_status,
                 item_type=excluded.item_type,
                 parent_appid=excluded.parent_appid,
+                release_category=excluded.release_category,
+                is_early_access=excluded.is_early_access,
+                review_score_label=excluded.review_score_label,
+                review_percent=excluded.review_percent,
+                review_count=excluded.review_count,
                 source=excluded.source,
                 updated_at=excluded.updated_at
             """, (
@@ -175,6 +225,11 @@ def save_games_batch(games_list: List[Dict[str, Any]]) -> None:
                 g.get("deck_status", "UNKNOWN"),
                 g.get("item_type", "GAME"),
                 g.get("parent_appid"),
+                g.get("release_category", "FIRST_RELEASE"),
+                1 if g.get("is_early_access") else 0,
+                g.get("review_score_label"),
+                g.get("review_percent"),
+                g.get("review_count"),
                 g.get("source", "POPULAR"),
                 now
             ))

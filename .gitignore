@@ -58,3 +58,6 @@ htmlcov/
 # Logs
 *.log
 logs/
+
+# Agents
+GEMINI.md

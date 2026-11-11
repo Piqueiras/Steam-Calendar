@@ -1,6 +1,7 @@
 import json
 import logging
-from typing import Optional, List, Dict, Any
+import datetime
+from typing import Optional, List, Dict, Any, Union
 import httpx
 from app.config import settings, get_active_steam_api_key
 from app.date_parser import parse_steam_date
@@ -28,13 +29,154 @@ def _extract_asset_urls(it: Dict[str, Any], appid: int) -> tuple[str, str]:
 
     return header_url, capsule_url
 
+def _extract_reviews(it: Dict[str, Any]) -> tuple[Optional[str], Optional[int], Optional[int]]:
+    """
+    Extrae la puntuación de reseñas de la API de Steam.
+    Devuelve (review_score_label, review_percent, review_count).
+    """
+    reviews_data = it.get("reviews")
+    if not isinstance(reviews_data, dict):
+        return None, None, None
+
+    summary = reviews_data.get("summary_filtered") or reviews_data.get("summary_unfiltered") or reviews_data
+
+    score_label = summary.get("review_score_label") or summary.get("review_score_desc")
+    percent = summary.get("percent_positive")
+    count = summary.get("review_count") or summary.get("total_reviews")
+
+    if not score_label and summary.get("review_score") is not None:
+        score_val = summary.get("review_score")
+        score_map = {
+            1: "Abrumadoramente negativas",
+            2: "Muy negativas",
+            3: "Negativas",
+            4: "Mayormente negativas",
+            5: "Variadas",
+            6: "Mayormente positivas",
+            7: "Positivas",
+            8: "Muy positivas",
+            9: "Abrumadoramente positivas"
+        }
+        score_label = score_map.get(score_val)
+
+    try:
+        count = int(count) if count is not None else None
+    except (ValueError, TypeError):
+        count = None
+
+    try:
+        percent = int(percent) if percent is not None else None
+    except (ValueError, TypeError):
+        percent = None
+
+    return score_label, percent, count
+
+def _detect_release_category(it: Dict[str, Any], is_dlc: bool) -> tuple[str, bool]:
+    """
+    Determina si un juego es:
+    - 'DLC': DLC / Expansión
+    - 'RELEASE_1_0': Lanzamiento versión 1.0 (graduación oficial de un juego que ya estaba en Early Access)
+    - 'FIRST_RELEASE': Primer lanzamiento (estreno directo o debut por primera vez en Early Access)
+    Devuelve (release_category, is_early_access).
+    """
+    if is_dlc:
+        return "DLC", False
+
+    rel = it.get("release", {})
+    basic = it.get("basic_info", {})
+
+    # 1. Indicadores de que el juego está asociado a Early Access
+    is_ea = False
+    if rel.get("is_early_access") or basic.get("is_early_access"):
+        is_ea = True
+
+    # Comprobación de tags (493 es el tag ID oficial de Valve para Early Access)
+    tags_data = it.get("tags", [])
+    if isinstance(tags_data, list):
+        for t in tags_data:
+            if isinstance(t, dict):
+                tag_id = t.get("tagid") or t.get("id")
+                t_name = str(t.get("name", "")).lower()
+                if tag_id == 493 or "early access" in t_name or "acceso anticipado" in t_name:
+                    is_ea = True
+                    break
+            elif isinstance(t, (int, str)):
+                if t == 493 or str(t) == "493" or "early access" in str(t).lower() or "acceso anticipado" in str(t).lower():
+                    is_ea = True
+                    break
+
+    # Comprobación de categorías y géneros (ID 29 = Early Access en API, ID 70 en Store)
+    categories = it.get("categories", {})
+    if isinstance(categories, dict):
+        genres = categories.get("genres", [])
+        if isinstance(genres, list):
+            for g in genres:
+                if isinstance(g, dict):
+                    gid = str(g.get("id", ""))
+                    gname = str(g.get("name", "")).lower()
+                    if gid in ["29", "70", "genre_early_access"] or "early access" in gname or "acceso anticipado" in gname:
+                        is_ea = True
+                        break
+
+    # 2. Comprobación precisa de GRADUACIÓN A 1.0:
+    # a) Campo oficial de Valve: `release_from_early_access_date`
+    has_valve_10_date = bool(rel.get("release_from_early_access_date"))
+
+    # b) Mención explícita en texto de fecha o nombre (ej: '1.0 Release', 'Salida del Acceso Anticipado', 'Full Launch')
+    custom_msg = str(rel.get("custom_release_date_message", "")).lower()
+    name = str(it.get("name", "")).lower()
+    has_explicit_10_text = any(
+        term in custom_msg or term in name 
+        for term in ["1.0", "full release", "full launch", "salida de ea", "salida del acceso anticipado", "leaves early access", "leaving early access"]
+    )
+
+    if has_valve_10_date or has_explicit_10_text:
+        return "RELEASE_1_0", True
+
+    # Si es un juego asociado a Early Access pero aún no ha salido por primera vez (is_coming_soon=True)
+    # o no tiene fecha de salida de EA anunciada: es su PRIMER LANZAMIENTO.
+    return "FIRST_RELEASE", is_ea
+
+def _extract_tags(it: Dict[str, Any], is_dlc: bool, is_ea: bool, rel_cat: str = "") -> List[str]:
+    """Extrae las etiquetas y géneros reales devueltos por Steam."""
+    tags = []
+    if is_dlc:
+        tags.append("DLC / Expansión")
+    elif rel_cat == "RELEASE_1_0":
+        tags.append("Lanzamiento 1.0")
+    elif is_ea:
+        tags.append("Acceso anticipado")
+
+    categories = it.get("categories", {})
+    if isinstance(categories, dict):
+        genres = categories.get("genres", [])
+        if isinstance(genres, list):
+            for g in genres:
+                if isinstance(g, dict):
+                    gname = g.get("name")
+                    if gname and gname not in tags and gname.lower() not in ["early access", "acceso anticipado"]:
+                        tags.append(gname)
+
+    tags_data = it.get("tags", [])
+    if isinstance(tags_data, list):
+        for t in tags_data:
+            if isinstance(t, dict):
+                tname = t.get("name")
+                if tname and tname not in tags and tname.lower() not in ["early access", "acceso anticipado"]:
+                    tags.append(tname)
+
+    if not tags:
+        tags = ["DLC / Expansión"] if is_dlc else ["Juego Oficial"]
+
+    return tags[:5]
+
 class SteamClient:
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key or get_active_steam_api_key()
         self.base_web_url = "https://api.steampowered.com"
         self.base_store_url = "https://store.steampowered.com"
 
-    def fetch_popular_upcoming(self, max_items: int = 250) -> List[Dict[str, Any]]:
+    def fetch_popular_upcoming(self, max_items: int = 2500) -> List[Dict[str, Any]]:
         """
         Consulta los próximos lanzamientos REALES y lanzamientos recientes desde los servidores de Steam.
         Utiliza IStoreQueryService con la API Key del usuario y complementa con featuredcategories.
@@ -65,7 +207,10 @@ class SteamClient:
                             "data_request": {
                                 "include_basic_info": True,
                                 "include_release": True,
-                                "include_assets": True
+                                "include_assets": True,
+                                "include_reviews": True,
+                                "include_categories": True,
+                                "include_tag_count": 20
                             }
                         }
                         res = client.get(
@@ -82,15 +227,18 @@ class SteamClient:
 
                                 name = it.get("name", f"App {appid}")
                                 rel = it.get("release", {})
-                                ts = rel.get("steam_release_date")
+                                ts = rel.get("release_from_early_access_date") or rel.get("steam_release_date")
                                 custom_msg = rel.get("custom_release_date_message")
                                 display_type = rel.get("coming_soon_display")
 
-                                date_info = parse_steam_date(
-                                    raw_date=custom_msg,
-                                    timestamp=ts,
-                                    display_type=display_type
-                                )
+                                if rel.get("release_from_early_access_date"):
+                                    date_info = parse_steam_date("", timestamp=ts)
+                                else:
+                                    date_info = parse_steam_date(
+                                        raw_date=custom_msg,
+                                        timestamp=ts,
+                                        display_type=display_type
+                                    )
 
                                 # Identificación real de DLC mediante la API oficial de Steam
                                 type_id = it.get("type", 0)
@@ -99,15 +247,10 @@ class SteamClient:
                                 is_dlc = type_id in [1, 4] or bool(parent_appid)
                                 item_type = "DLC" if is_dlc else "GAME"
 
-                                # Etiquetas
-                                basic = it.get("basic_info", {})
-                                tags = []
-                                if is_dlc:
-                                    tags.append("DLC / Expansión")
-                                elif basic.get("short_description"):
-                                    tags.append("Juego Oficial")
-                                else:
-                                    tags.append("Próximo Estreno")
+                                # Categorización: 1.0 (de Early Access), Primer Lanzamiento, o DLC
+                                rel_cat, is_ea = _detect_release_category(it, is_dlc)
+                                rev_label, rev_pct, rev_cnt = _extract_reviews(it)
+                                tags = _extract_tags(it, is_dlc, is_ea, rel_cat)
 
                                 header_url, capsule_url = _extract_asset_urls(it, appid)
 
@@ -126,6 +269,11 @@ class SteamClient:
                                     "deck_status": "UNKNOWN",
                                     "item_type": item_type,
                                     "parent_appid": parent_appid,
+                                    "release_category": rel_cat,
+                                    "is_early_access": is_ea,
+                                    "review_score_label": rev_label,
+                                    "review_percent": rev_pct,
+                                    "review_count": rev_cnt,
                                     "source": "STEAM_API"
                                 }
                 except Exception as e:
@@ -137,7 +285,7 @@ class SteamClient:
                     payload_recent = {
                         "query": {
                             "start": 0,
-                            "count": 50,
+                            "count": 100,
                             "sort": 20,
                             "filters": {
                                 "released_only": True,
@@ -152,7 +300,10 @@ class SteamClient:
                         "data_request": {
                             "include_basic_info": True,
                             "include_release": True,
-                            "include_assets": True
+                            "include_assets": True,
+                            "include_reviews": True,
+                            "include_categories": True,
+                            "include_tag_count": 20
                         }
                     }
                     res = client.get(
@@ -167,7 +318,7 @@ class SteamClient:
                                 continue
 
                             rel = it.get("release", {})
-                            ts = rel.get("steam_release_date")
+                            ts = rel.get("release_from_early_access_date") or rel.get("steam_release_date")
                             if not ts:
                                 continue
 
@@ -178,7 +329,9 @@ class SteamClient:
                             is_dlc = type_id in [1, 4] or bool(parent_appid)
                             item_type = "DLC" if is_dlc else "GAME"
 
-                            tags = ["DLC / Expansión"] if is_dlc else ["Lanzamiento Reciente"]
+                            rel_cat, is_ea = _detect_release_category(it, is_dlc)
+                            rev_label, rev_pct, rev_cnt = _extract_reviews(it)
+                            tags = _extract_tags(it, is_dlc, is_ea, rel_cat)
                             header_url, capsule_url = _extract_asset_urls(it, appid)
 
                             recent_dict[appid] = {
@@ -196,10 +349,103 @@ class SteamClient:
                                 "deck_status": "UNKNOWN",
                                 "item_type": item_type,
                                 "parent_appid": parent_appid,
+                                "release_category": rel_cat,
+                                "is_early_access": is_ea,
+                                "review_score_label": rev_label,
+                                "review_percent": rev_pct,
+                                "review_count": rev_cnt,
                                 "source": "STEAM_RECENT"
                             }
             except Exception as e:
                 logger.warning(f"Error consultando lanzamientos recientes: {e}")
+
+            # 1.2 Consulta profunda del catálogo por fecha de lanzamiento (sin coming_soon_only para capturar graduaciones de Early Access hasta max_items)
+            for start_bulk in range(0, max_items, 100):
+                try:
+                    with httpx.Client(timeout=10.0) as client:
+                        payload_bulk = {
+                            "query": {
+                                "start": start_bulk,
+                                "count": 100,
+                                "sort": 20
+                            },
+                            "context": {
+                                "language": "spanish",
+                                "country_code": "ES",
+                                "steam_realm": 1
+                            },
+                            "data_request": {
+                                "include_basic_info": True,
+                                "include_release": True,
+                                "include_assets": True,
+                                "include_reviews": True,
+                                "include_categories": True,
+                                "include_tag_count": 20
+                            }
+                        }
+                        res = client.get(
+                            f"{self.base_web_url}/IStoreQueryService/Query/v1/",
+                            params={"key": self.api_key, "input_json": json.dumps(payload_bulk)}
+                        )
+                        if res.status_code == 200:
+                            items = res.json().get("response", {}).get("store_items", [])
+                            if not items:
+                                break
+                            for it in items:
+                                appid = it.get("id") or it.get("appid")
+                                if not appid or appid in upcoming_dict or appid in recent_dict:
+                                    continue
+
+                                rel = it.get("release", {})
+                                ts = rel.get("release_from_early_access_date") or rel.get("steam_release_date")
+                                custom_msg = rel.get("custom_release_date_message")
+                                display_type = rel.get("coming_soon_display")
+
+                                if rel.get("release_from_early_access_date"):
+                                    date_info = parse_steam_date("", timestamp=ts)
+                                else:
+                                    date_info = parse_steam_date(
+                                        raw_date=custom_msg,
+                                        timestamp=ts,
+                                        display_type=display_type
+                                    )
+
+                                type_id = it.get("type", 0)
+                                rel_items = it.get("related_items", {})
+                                parent_appid = rel_items.get("parent_appid")
+                                is_dlc = type_id in [1, 4] or bool(parent_appid)
+                                item_type = "DLC" if is_dlc else "GAME"
+
+                                # Categorización precisa: solo RELEASE_1_0 si tiene fecha oficial de salida o mención explícita
+                                rel_cat, is_ea = _detect_release_category(it, is_dlc)
+                                rev_label, rev_pct, rev_cnt = _extract_reviews(it)
+                                tags = _extract_tags(it, is_dlc, is_ea, rel_cat)
+                                header_url, capsule_url = _extract_asset_urls(it, appid)
+
+                                upcoming_dict[appid] = {
+                                    "appid": appid,
+                                    "name": it.get("name", f"App {appid}"),
+                                    "raw_date_str": date_info["raw_date_str"],
+                                    "calendar_date": date_info["calendar_date"],
+                                    "precision": date_info["precision"],
+                                    "display_badge": date_info["display_badge"],
+                                    "header_image": header_url,
+                                    "capsule_image": capsule_url,
+                                    "tags": tags,
+                                    "price_str": "Por confirmar",
+                                    "is_free": False,
+                                    "deck_status": "UNKNOWN",
+                                    "item_type": item_type,
+                                    "parent_appid": parent_appid,
+                                    "release_category": rel_cat,
+                                    "is_early_access": is_ea,
+                                    "review_score_label": rev_label,
+                                    "review_percent": rev_pct,
+                                    "review_count": rev_cnt,
+                                    "source": "STEAM_EA_1_0" if rel_cat == "RELEASE_1_0" else "STEAM_API"
+                                }
+                except Exception as e:
+                    logger.warning(f"Error en consulta profunda del catálogo (start={start_bulk}): {e}")
 
         # 2. Complementar con el endpoint público de la tienda (featured categories / coming_soon)
         try:
@@ -233,6 +479,11 @@ class SteamClient:
                             "deck_status": "UNKNOWN",
                             "item_type": "GAME",
                             "parent_appid": None,
+                            "release_category": "FIRST_RELEASE",
+                            "is_early_access": False,
+                            "review_score_label": None,
+                            "review_percent": None,
+                            "review_count": None,
                             "source": "STEAM_FEATURED"
                         }
         except Exception as e:
@@ -276,7 +527,10 @@ class SteamClient:
                 "data_request": {
                     "include_basic_info": True,
                     "include_release": True,
-                    "include_assets": True
+                    "include_assets": True,
+                    "include_reviews": True,
+                    "include_categories": True,
+                    "include_tag_count": 20
                 }
             }
             try:
@@ -293,18 +547,18 @@ class SteamClient:
                                 continue
 
                             rel = it.get("release", {})
-                            # Si es un juego ya lanzado y no un próximo estreno, lo omitimos o marcamos
-                            is_coming_soon = rel.get("is_coming_soon", False)
-                            
-                            ts = rel.get("steam_release_date")
+                            ts = rel.get("release_from_early_access_date") or rel.get("steam_release_date")
                             custom_msg = rel.get("custom_release_date_message")
                             display_type = rel.get("coming_soon_display")
 
-                            date_info = parse_steam_date(
-                                raw_date=custom_msg,
-                                timestamp=ts,
-                                display_type=display_type
-                            )
+                            if rel.get("release_from_early_access_date"):
+                                date_info = parse_steam_date("", timestamp=ts)
+                            else:
+                                date_info = parse_steam_date(
+                                    raw_date=custom_msg,
+                                    timestamp=ts,
+                                    display_type=display_type
+                                )
 
                             header_url, capsule_url = _extract_asset_urls(it, appid)
 
@@ -314,15 +568,9 @@ class SteamClient:
                             is_dlc = type_id in [1, 4] or bool(parent_appid)
                             item_type = "DLC" if is_dlc else "GAME"
 
-                            tags = []
-                            if is_dlc:
-                                tags.append("DLC / Expansión")
-                            else:
-                                basic = it.get("basic_info", {})
-                                if basic.get("short_description"):
-                                    tags.append("Juego en Seguimiento")
-                                else:
-                                    tags.append("Próximo Estreno")
+                            rel_cat, is_ea = _detect_release_category(it, is_dlc)
+                            rev_label, rev_pct, rev_cnt = _extract_reviews(it)
+                            tags = _extract_tags(it, is_dlc, is_ea, rel_cat)
 
                             detailed_games.append({
                                 "appid": appid,
@@ -339,12 +587,38 @@ class SteamClient:
                                 "deck_status": "UNKNOWN",
                                 "item_type": item_type,
                                 "parent_appid": parent_appid,
+                                "release_category": rel_cat,
+                                "is_early_access": is_ea,
+                                "review_score_label": rev_label,
+                                "review_percent": rev_pct,
+                                "review_count": rev_cnt,
                                 "source": "WISHLIST_API"
                             })
             except Exception as e:
                 logger.warning(f"Error consultando detalles en lote para Wishlist: {e}")
 
         return detailed_games
+
+    def fetch_reviews_for_app(self, appid: int) -> tuple[Optional[str], Optional[int], Optional[int]]:
+        """
+        Consulta la puntuación de reseñas de un juego lanzado utilizando el endpoint público de Steam Store.
+        Devuelve (review_score_label, review_percent, review_count).
+        """
+        try:
+            with httpx.Client(timeout=5.0) as client:
+                url = f"{self.base_store_url}/appreviews/{appid}"
+                params = {"json": 1, "language": "spanish", "purchase_type": "all"}
+                res = client.get(url, params=params)
+                if res.status_code == 200:
+                    summary = res.json().get("query_summary", {})
+                    label = summary.get("review_score_desc")
+                    total = summary.get("total_reviews", 0)
+                    pos = summary.get("total_positive", 0)
+                    pct = int(round((pos / total) * 100)) if total > 0 else None
+                    return label, pct, total
+        except Exception as e:
+            logger.debug(f"Error consultando reseñas para app {appid}: {e}")
+        return None, None, None
 
     def fetch_user_library(self, steam_id: str) -> List[Dict[str, Any]]:
         """Obtiene los juegos poseídos y horas de juego usando la Steam Web API."""
@@ -407,3 +681,168 @@ class SteamClient:
         except Exception:
             pass
         return {"personaname": f"Steam User ({steam_id[-4:]})", "avatar": "https://avatars.steamstatic.com/fef49e7fa7e1997310d705b2a6158ff8dc1cdfeb_full.jpg"}
+
+    def search_games(self, query: str) -> List[Dict[str, Any]]:
+        """
+        Busca juegos en Steam mediante Store Search y obtiene sus detalles enriquecidos
+        vía IStoreBrowseService (incluyendo fechas oficiales de 1.0, tags y reseñas).
+        """
+        query = query.strip()
+        if not query:
+            return []
+
+        appids = []
+        # Si el usuario introdujo un AppID directamente o una URL de Steam
+        if query.isdigit():
+            appids.append(int(query))
+        elif "store.steampowered.com/app/" in query:
+            import re
+            m = re.search(r"/app/(\d+)", query)
+            if m:
+                appids.append(int(m.group(1)))
+
+        # Búsqueda mediante la API de búsqueda de Steam Store
+        if not appids:
+            try:
+                with httpx.Client(timeout=10.0) as client:
+                    res = client.get(
+                        f"{self.base_store_url}/api/storesearch/",
+                        params={"term": query, "l": "spanish", "cc": "ES"}
+                    )
+                    if res.status_code == 200:
+                        data = res.json()
+                        for it in data.get("items", [])[:10]:
+                            aid = it.get("id")
+                            if aid:
+                                appids.append(aid)
+            except Exception as e:
+                logger.warning(f"Error en storesearch para '{query}': {e}")
+
+        if not appids:
+            return []
+
+        # Obtener metadatos completos y enriquecidos de Valve
+        found_games = self.fetch_wishlist_games_details(appids)
+        return found_games
+
+    def get_game_release_info(self, app_id_or_url: Union[int, str]) -> Dict[str, Any]:
+        """
+        Obtiene dinámicamente y sin datos hardcodeados la fecha de lanzamiento de cualquier juego de Steam,
+        identificando si es graduación 1.0 de Early Access o primer lanzamiento.
+        Soporta AppIDs numéricos o URLs completas de Steam Store.
+        """
+        cleaned = str(app_id_or_url).strip()
+        appid = None
+        if cleaned.isdigit():
+            appid = int(cleaned)
+        else:
+            import re
+            m = re.search(r"/app/(\d+)", cleaned)
+            if m:
+                appid = int(m.group(1))
+
+        if not appid:
+            return {"error": f"No se pudo extraer el AppID de '{app_id_or_url}'"}
+
+        url_browse = f"{self.base_web_url}/IStoreBrowseService/GetItems/v1/?key={self.api_key}"
+        payload = {
+            "ids": [{"appid": appid}],
+            "context": {"language": "spanish", "country_code": "ES", "steam_realm": 1},
+            "data_request": {
+                "include_basic_info": True,
+                "include_release": True,
+                "include_assets": True,
+                "include_reviews": True,
+                "include_categories": True,
+                "include_tag_count": 20
+            }
+        }
+
+        item = None
+        try:
+            with httpx.Client(timeout=10.0) as client:
+                res = client.get(url_browse, params={"input_json": json.dumps(payload)})
+                if res.status_code == 200:
+                    store_items = res.json().get("response", {}).get("store_items", [])
+                    if store_items:
+                        item = store_items[0]
+        except Exception as e:
+            logger.warning(f"Error consultando IStoreBrowseService para {appid}: {e}")
+
+        name = item.get("name") if item else f"App {appid}"
+        rel = item.get("release", {}) if item else {}
+
+        ea_10_ts = rel.get("release_from_early_access_date")
+        steam_rel_ts = rel.get("steam_release_date")
+        custom_msg = rel.get("custom_release_date_message")
+        display_type = rel.get("coming_soon_display")
+        is_ea = rel.get("is_early_access", False)
+
+        type_id = item.get("type", 0) if item else 0
+        rel_items = item.get("related_items", {}) if item else {}
+        parent_appid = rel_items.get("parent_appid")
+        is_dlc = type_id in [1, 4] or bool(parent_appid)
+
+        # 1. ¿Tiene fecha oficial de salida de Early Access en la API de Valve?
+        if ea_10_ts:
+            dt = datetime.datetime.fromtimestamp(ea_10_ts, tz=datetime.timezone.utc)
+            cal_date = dt.strftime("%Y-%m-%d")
+            return {
+                "appid": appid,
+                "name": name,
+                "calendar_date": cal_date,
+                "raw_date_str": dt.strftime("%d %b %Y"),
+                "precision": "EXACT_DAY",
+                "release_category": "RELEASE_1_0",
+                "is_early_access": True,
+                "leaving_early_access": True,
+                "detection_method": "VALVE_API_RELEASE_FROM_EARLY_ACCESS_DATE",
+                "steam_store_url": f"https://store.steampowered.com/app/{appid}/"
+            }
+
+        # 2. Comprobación en la página web pública de Steam (div.leaving_early_access)
+        try:
+            with httpx.Client(timeout=8.0) as client:
+                r_page = client.get(
+                    f"{self.base_store_url}/app/{appid}/?l=spanish",
+                    headers={"User-Agent": "Mozilla/5.0"},
+                    follow_redirects=True
+                )
+                if r_page.status_code == 200:
+                    import re
+                    m_leaving = re.search(r'<div class="leaving_early_access">.*?<(?:h2|h3)[^>]*>(.*?)</(?:h2|h3)>', r_page.text, re.DOTALL | re.IGNORECASE)
+                    if m_leaving:
+                        raw_text = m_leaving.group(1).strip()
+                        cleaned_date_str = re.sub(r'^(?:salida del acceso anticipado|leaving early access)\s*:\s*', '', raw_text, flags=re.IGNORECASE).strip()
+                        parsed = parse_steam_date(cleaned_date_str)
+                        return {
+                            "appid": appid,
+                            "name": name,
+                            "calendar_date": parsed["calendar_date"],
+                            "raw_date_str": parsed["raw_date_str"],
+                            "precision": parsed["precision"],
+                            "release_category": "RELEASE_1_0",
+                            "is_early_access": True,
+                            "leaving_early_access": True,
+                            "detection_method": "STEAM_STORE_PAGE_LEAVING_EARLY_ACCESS",
+                            "steam_store_url": f"https://store.steampowered.com/app/{appid}/"
+                        }
+        except Exception as e:
+            logger.warning(f"Error comprobando página web de Steam para {appid}: {e}")
+
+        # 3. Lanzamiento normal o debut en Early Access (Coming Soon)
+        parsed = parse_steam_date(raw_date=custom_msg, timestamp=steam_rel_ts, display_type=display_type)
+        rel_cat = "DLC" if is_dlc else "FIRST_RELEASE"
+
+        return {
+            "appid": appid,
+            "name": name,
+            "calendar_date": parsed["calendar_date"],
+            "raw_date_str": parsed["raw_date_str"],
+            "precision": parsed["precision"],
+            "release_category": rel_cat,
+            "is_early_access": is_ea,
+            "leaving_early_access": False,
+            "detection_method": "STEAM_STANDARD_RELEASE",
+            "steam_store_url": f"https://store.steampowered.com/app/{appid}/"
+        }

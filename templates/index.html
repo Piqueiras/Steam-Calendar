@@ -49,12 +49,22 @@
             Todos los estrenos (<span id="count-all">0</span>)
         </button>
         
+        {% if steam_id %}
         <button id="filter-wishlist" onclick="setFilter('wishlist')" class="filter-btn text-xs font-semibold px-3 py-1.5 rounded border border-[#2a3844] bg-[#1b2838] hover:bg-[#223549] text-gray-300">
             ⭐ Mi Wishlist (<span id="count-wishlist">0</span>)
         </button>
 
         <button id="filter-dlc" onclick="setFilter('dlc')" class="filter-btn text-xs font-semibold px-3 py-1.5 rounded border border-[#2a3844] bg-[#1b2838] hover:bg-[#223549] text-gray-300">
             📦 DLCs de mi biblioteca (<span id="count-dlc">0</span>)
+        </button>
+        {% endif %}
+
+        <button id="filter-release-10" onclick="setFilter('release-10')" class="filter-btn text-xs font-semibold px-3 py-1.5 rounded border border-[#2a3844] bg-[#1b2838] hover:bg-[#223549] text-gray-300">
+            🚀 Lanzamientos 1.0 (<span id="count-release-10">0</span>)
+        </button>
+
+        <button id="filter-first-release" onclick="setFilter('first-release')" class="filter-btn text-xs font-semibold px-3 py-1.5 rounded border border-[#2a3844] bg-[#1b2838] hover:bg-[#223549] text-gray-300">
+            ✨ Primer Lanzamiento (<span id="count-first-release">0</span>)
         </button>
 
         <button id="filter-deck" onclick="setFilter('deck')" class="filter-btn text-xs font-semibold px-3 py-1.5 rounded border border-[#2a3844] bg-[#1b2838] hover:bg-[#223549] text-gray-300">
