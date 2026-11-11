@@ -1,91 +1,11 @@
 import json
-import re
-import html
+import logging
 from typing import Optional, List, Dict, Any
 import httpx
 from app.config import settings, get_active_steam_api_key
 from app.date_parser import parse_steam_date
 
-# Lista de muestra realista para fallback cuando no hay conexión externa o en tests
-SAMPLE_UPCOMING_GAMES = [
-    {
-        "appid": 1030300,
-        "name": "Hollow Knight: Silksong",
-        "raw_date_str": "Coming Soon",
-        "tags": ["Metroidvania", "Souls-like", "Acción", "2D"],
-        "capsule_image": "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/1030300/header.jpg",
-        "header_image": "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/1030300/header.jpg",
-        "price_str": "Por anunciar",
-        "is_free": False,
-        "deck_status": "VERIFIED"
-    },
-    {
-        "appid": 2246340,
-        "name": "Monster Hunter Wilds",
-        "raw_date_str": "28 Feb, 2027",
-        "tags": ["Caza", "Multijugador", "Rol de acción", "Mundo abierto"],
-        "capsule_image": "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/2246340/header.jpg",
-        "header_image": "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/2246340/header.jpg",
-        "price_str": "69,99€",
-        "is_free": False,
-        "deck_status": "PLAYABLE"
-    },
-    {
-        "appid": 1774580,
-        "name": "STAR WARS Outlaws",
-        "raw_date_str": "21 Nov, 2026",
-        "tags": ["Aventura", "Mundo abierto", "Ciencia ficción", "Disparos"],
-        "capsule_image": "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/1774580/header.jpg",
-        "header_image": "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/1774580/header.jpg",
-        "price_str": "69,99€",
-        "is_free": False,
-        "deck_status": "VERIFIED"
-    },
-    {
-        "appid": 2420110,
-        "name": "Civilization VII",
-        "raw_date_str": "11 Feb, 2027",
-        "tags": ["Estrategia", "Por turnos", "Histórico", "4X"],
-        "capsule_image": "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/2420110/header.jpg",
-        "header_image": "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/2420110/header.jpg",
-        "price_str": "69,99€",
-        "is_free": False,
-        "deck_status": "PLAYABLE"
-    },
-    {
-        "appid": 2358720,
-        "name": "Black Myth: Wukong - Expansion DLC",
-        "raw_date_str": "Q1 2027",
-        "tags": ["Rol de acción", "Mitología", "Souls-like"],
-        "capsule_image": "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/2358720/header.jpg",
-        "header_image": "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/2358720/header.jpg",
-        "price_str": "29,99€",
-        "is_free": False,
-        "deck_status": "VERIFIED"
-    },
-    {
-        "appid": 1462040,
-        "name": "Final Fantasy XVI",
-        "raw_date_str": "17 Nov, 2026",
-        "tags": ["JRPG", "Acción", "Fantasía oscura", "Historia rica"],
-        "capsule_image": "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/1462040/header.jpg",
-        "header_image": "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/1462040/header.jpg",
-        "price_str": "49,99€",
-        "is_free": False,
-        "deck_status": "VERIFIED"
-    },
-    {
-        "appid": 2050650,
-        "name": "Resident Evil 9",
-        "raw_date_str": "Q4 2027",
-        "tags": ["Terror de supervivencia", "Acción", "Zombis"],
-        "capsule_image": "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/2050650/header.jpg",
-        "header_image": "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/2050650/header.jpg",
-        "price_str": "69,99€",
-        "is_free": False,
-        "deck_status": "UNKNOWN"
-    }
-]
+logger = logging.getLogger(__name__)
 
 class SteamClient:
     def __init__(self, api_key: Optional[str] = None):
@@ -93,88 +13,72 @@ class SteamClient:
         self.base_web_url = "https://api.steampowered.com"
         self.base_store_url = "https://store.steampowered.com"
 
-    def _parse_html_search_results(self, html_content: str) -> List[Dict[str, Any]]:
-        """Extrae juegos de los resultados HTML devueltos por el endpoint search/results."""
-        games = []
-        # Buscar bloques <a href=".../app/12345/..." ...>
-        app_pattern = re.compile(
-            r'href="https://store\.steampowered\.com/app/(\d+)/([^/"]*)/[^"]*".*?'
-            r'class="title">([^<]+)</span>.*?'
-            r'(?:class="search_released[^>]*>([^<]*)</div>)?.*?'
-            r'(?:class="discount_final_price[^>]*>([^<]*)</div>)?',
-            re.DOTALL
-        )
-        for match in app_pattern.finditer(html_content):
-            appid_str, slug, name_raw, release_raw, price_raw = match.groups()
-            appid = int(appid_str)
-            name = html.unescape(name_raw.strip())
-            raw_date = html.unescape(release_raw.strip()) if release_raw else "Coming Soon"
-            price = html.unescape(price_raw.strip()) if price_raw else ""
-            date_info = parse_steam_date(raw_date)
+    def fetch_popular_upcoming(self, max_items: int = 150) -> List[Dict[str, Any]]:
+        """
+        Consulta los próximos lanzamientos REALES desde los servidores oficiales de Steam.
+        Utiliza IStoreQueryService con la API Key del usuario y complementa con featuredcategories.
+        """
+        games_dict: Dict[int, Dict[str, Any]] = {}
 
-            header_img = f"https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/{appid}/header.jpg"
-            capsule_img = f"https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/{appid}/capsule_616x353.jpg"
-
-            games.append({
-                "appid": appid,
-                "name": name,
-                "raw_date_str": date_info["raw_date_str"],
-                "calendar_date": date_info["calendar_date"],
-                "precision": date_info["precision"],
-                "display_badge": date_info["display_badge"],
-                "header_image": header_img,
-                "capsule_image": capsule_img,
-                "tags": ["Destacado", "Popular"],
-                "price_str": price,
-                "is_free": "Free" in price or "Gratis" in price,
-                "deck_status": "UNKNOWN",
-                "source": "STEAM_SEARCH"
-            })
-        return games
-
-    def fetch_popular_upcoming(self, count: int = 50) -> List[Dict[str, Any]]:
-        """Consulta el catálogo de próximos lanzamientos de Steam (público o con API Key)."""
-        # Si disponemos de clave, podemos consultar IStoreQueryService
+        # 1. Consulta oficial con IStoreQueryService si se dispone de API Key
         if self.api_key:
-            try:
-                with httpx.Client(timeout=8.0) as client:
-                    input_payload = {
-                        "query": {
-                            "start": 0,
-                            "count": count,
-                            "sort": 20,
-                            "filters": {
-                                "coming_soon_only": True,
-                                "type_filters": {"include_games": True}
+            for sort_type in [20, 0]:  # 20: Recientes/Fechas, 0: Relevancia/Popularidad
+                try:
+                    with httpx.Client(timeout=10.0) as client:
+                        payload = {
+                            "query": {
+                                "start": 0,
+                                "count": 100,
+                                "sort": sort_type,
+                                "filters": {
+                                    "coming_soon_only": True,
+                                    "type_filters": {"include_games": True}
+                                }
+                            },
+                            "context": {
+                                "language": "spanish",
+                                "country_code": "ES",
+                                "steam_realm": 1
+                            },
+                            "data_request": {
+                                "include_basic_info": True,
+                                "include_release": True,
+                                "include_assets": True
                             }
-                        },
-                        "context": {
-                            "language": "spanish",
-                            "country_code": "ES",
-                            "steam_realm": 1
-                        },
-                        "data_request": {
-                            "include_basic_info": True,
-                            "include_release": True,
-                            "include_assets": True
                         }
-                    }
-                    res = client.get(
-                        f"{self.base_web_url}/IStoreQueryService/Query/v1/",
-                        params={"key": self.api_key, "input_json": json.dumps(input_payload)}
-                    )
-                    if res.status_code == 200:
-                        items = res.json().get("response", {}).get("store_items", [])
-                        if items:
-                            parsed_items = []
+                        res = client.get(
+                            f"{self.base_web_url}/IStoreQueryService/Query/v1/",
+                            params={"key": self.api_key, "input_json": json.dumps(payload)}
+                        )
+                        if res.status_code == 200:
+                            data = res.json().get("response", {})
+                            items = data.get("store_items", []) or data.get("items", [])
                             for it in items:
-                                appid = it.get("appid")
+                                appid = it.get("id") or it.get("appid")
+                                if not appid or appid in games_dict:
+                                    continue
+
                                 name = it.get("name", f"App {appid}")
                                 rel = it.get("release", {})
-                                raw_date = rel.get("custom_release_date_message") or ""
                                 ts = rel.get("steam_release_date")
-                                date_info = parse_steam_date(raw_date, timestamp=ts)
-                                parsed_items.append({
+                                custom_msg = rel.get("custom_release_date_message")
+                                display_type = rel.get("coming_soon_display")
+
+                                date_info = parse_steam_date(
+                                    raw_date=custom_msg,
+                                    timestamp=ts,
+                                    display_type=display_type
+                                )
+
+                                # Etiquetas básicas
+                                basic = it.get("basic_info", {})
+                                tags = []
+                                if basic.get("short_description"):
+                                    tags.append("Juego Oficial")
+                                else:
+                                    tags.append("Próximo Estreno")
+
+                                games_dict[appid] = {
                                     "appid": appid,
                                     "name": name,
                                     "raw_date_str": date_info["raw_date_str"],
@@ -183,49 +87,53 @@ class SteamClient:
                                     "display_badge": date_info["display_badge"],
                                     "header_image": f"https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/{appid}/header.jpg",
                                     "capsule_image": f"https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/{appid}/capsule_616x353.jpg",
-                                    "tags": ["Lanzamiento Oficial"],
-                                    "price_str": "",
+                                    "tags": tags,
+                                    "price_str": "Por confirmar",
                                     "is_free": False,
                                     "deck_status": "UNKNOWN",
-                                    "source": "ISTORE_QUERY"
-                                })
-                            return parsed_items
-            except Exception:
-                pass  # Fallback a search o sample data
+                                    "source": "STEAM_API"
+                                }
+                except Exception as e:
+                    logger.warning(f"Error consultando IStoreQueryService (sort={sort_type}): {e}")
 
-        # Intentar con endpoint público de Steam search results
+        # 2. Complementar con el endpoint público de la tienda (featured categories / coming_soon)
         try:
             with httpx.Client(timeout=8.0) as client:
-                url = f"{self.base_store_url}/search/results/"
-                params = {
-                    "filter": "popularcomingsoon",
-                    "category1": "998",
-                    "count": count,
-                    "json": "1"
-                }
-                res = client.get(url, params=params)
+                res = client.get(f"{self.base_store_url}/api/featuredcategories?cc=ES&l=spanish")
                 if res.status_code == 200:
-                    data = res.json()
-                    html_chunk = data.get("results_html", "")
-                    games = self._parse_html_search_results(html_chunk)
-                    if games:
-                        return games
-        except Exception:
-            pass
+                    cs_items = res.json().get("coming_soon", {}).get("items", [])
+                    for it in cs_items:
+                        appid = it.get("id")
+                        if not appid or appid in games_dict:
+                            continue
 
-        # Fallback resiliente si la red está inaccesible (sandbox / offline)
-        results = []
-        for g in SAMPLE_UPCOMING_GAMES:
-            date_info = parse_steam_date(g["raw_date_str"])
-            item = dict(g)
-            item.update({
-                "calendar_date": date_info["calendar_date"],
-                "precision": date_info["precision"],
-                "display_badge": date_info["display_badge"],
-                "source": "SAMPLE_DATA"
-            })
-            results.append(item)
-        return results
+                        name = it.get("name", f"App {appid}")
+                        # Si no tiene fecha estructurada, se asigna TBA
+                        date_info = parse_steam_date(it.get("status") or "Próximamente")
+                        
+                        price_val = it.get("final_price", 0)
+                        price_str = f"{price_val / 100:.2f}€" if price_val > 0 else "Por anunciar"
+
+                        games_dict[appid] = {
+                            "appid": appid,
+                            "name": name,
+                            "raw_date_str": date_info["raw_date_str"],
+                            "calendar_date": date_info["calendar_date"],
+                            "precision": date_info["precision"],
+                            "display_badge": date_info["display_badge"],
+                            "header_image": it.get("header_image") or f"https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/{appid}/header.jpg",
+                            "capsule_image": it.get("large_capsule_image") or f"https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/{appid}/capsule_616x353.jpg",
+                            "tags": ["Destacado Steam"],
+                            "price_str": price_str,
+                            "is_free": price_val == 0,
+                            "deck_status": "UNKNOWN",
+                            "source": "STEAM_FEATURED"
+                        }
+        except Exception as e:
+            logger.warning(f"Error consultando featuredcategories: {e}")
+
+        # Devolver la lista completa de juegos reales
+        return list(games_dict.values())[:max_items]
 
     def fetch_user_wishlist(self, steam_id: str) -> List[int]:
         """Obtiene la lista de appids deseados por el usuario."""
@@ -239,9 +147,78 @@ class SteamClient:
                 if res.status_code == 200:
                     items = res.json().get("response", {}).get("items", [])
                     return [item["appid"] for item in items if "appid" in item]
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Error consultando Wishlist para {steam_id}: {e}")
         return []
+
+    def fetch_wishlist_games_details(self, appids: List[int]) -> List[Dict[str, Any]]:
+        """
+        Consulta los detalles y fechas de lanzamiento exactas para la lista de juegos deseados
+        usando IStoreBrowseService/GetItems/v1 en lotes de 50.
+        """
+        if not self.api_key or not appids:
+            return []
+
+        detailed_games = []
+        chunk_size = 50
+
+        for i in range(0, len(appids), chunk_size):
+            chunk = appids[i:i + chunk_size]
+            payload = {
+                "ids": [{"appid": aid} for aid in chunk],
+                "context": {"language": "spanish", "country_code": "ES"},
+                "data_request": {
+                    "include_basic_info": True,
+                    "include_release": True,
+                    "include_assets": True
+                }
+            }
+            try:
+                with httpx.Client(timeout=10.0) as client:
+                    res = client.get(
+                        f"{self.base_web_url}/IStoreBrowseService/GetItems/v1/",
+                        params={"key": self.api_key, "input_json": json.dumps(payload)}
+                    )
+                    if res.status_code == 200:
+                        items = res.json().get("response", {}).get("store_items", [])
+                        for it in items:
+                            appid = it.get("appid") or it.get("id")
+                            if not appid:
+                                continue
+
+                            rel = it.get("release", {})
+                            # Si es un juego ya lanzado y no un próximo estreno, lo omitimos o marcamos
+                            is_coming_soon = rel.get("is_coming_soon", False)
+                            
+                            ts = rel.get("steam_release_date")
+                            custom_msg = rel.get("custom_release_date_message")
+                            display_type = rel.get("coming_soon_display")
+
+                            date_info = parse_steam_date(
+                                raw_date=custom_msg,
+                                timestamp=ts,
+                                display_type=display_type
+                            )
+
+                            detailed_games.append({
+                                "appid": appid,
+                                "name": it.get("name", f"App {appid}"),
+                                "raw_date_str": date_info["raw_date_str"],
+                                "calendar_date": date_info["calendar_date"],
+                                "precision": date_info["precision"],
+                                "display_badge": date_info["display_badge"],
+                                "header_image": f"https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/{appid}/header.jpg",
+                                "capsule_image": f"https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/{appid}/capsule_616x353.jpg",
+                                "tags": ["Wishlist"],
+                                "price_str": "En Deseados",
+                                "is_free": False,
+                                "deck_status": "UNKNOWN",
+                                "source": "WISHLIST_API"
+                            })
+            except Exception as e:
+                logger.warning(f"Error consultando detalles en lote para Wishlist: {e}")
+
+        return detailed_games
 
     def fetch_user_library(self, steam_id: str) -> List[Dict[str, Any]]:
         """Obtiene los juegos poseídos y horas de juego usando la Steam Web API."""
@@ -259,9 +236,34 @@ class SteamClient:
                 res = client.get(url, params=params)
                 if res.status_code == 200:
                     return res.json().get("response", {}).get("games", [])
+        except Exception as e:
+            logger.warning(f"Error consultando biblioteca para {steam_id}: {e}")
+        return []
+
+    def resolve_vanity_url(self, vanity: str) -> Optional[str]:
+        """Resuelve un nombre personalizado de perfil de Steam (vanity URL) o extrae el SteamID64."""
+        cleaned = vanity.strip().rstrip("/")
+        if "/" in cleaned:
+            cleaned = cleaned.split("/")[-1]
+            
+        if cleaned.isdigit() and len(cleaned) >= 17:
+            return cleaned
+            
+        if not self.api_key:
+            return None
+            
+        try:
+            with httpx.Client(timeout=8.0) as client:
+                url = f"{self.base_web_url}/ISteamUser/ResolveVanityURL/v1/"
+                params = {"key": self.api_key, "vanityurl": cleaned}
+                res = client.get(url, params=params)
+                if res.status_code == 200:
+                    resp_data = res.json().get("response", {})
+                    if resp_data.get("success") == 1:
+                        return resp_data.get("steamid")
         except Exception:
             pass
-        return []
+        return None
 
     def fetch_player_summary(self, steam_id: str) -> Optional[Dict[str, Any]]:
         """Obtiene el nombre de perfil y avatar de un SteamID."""

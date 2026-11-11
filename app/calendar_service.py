@@ -1,12 +1,14 @@
 import datetime
 import json
 from typing import List, Dict, Any, Optional
-from icalendar import Calendar, Event, vText, vDate
+from icalendar import Calendar, Event, vDate
 from app.db import (
     get_cached_games,
     save_games_batch,
     get_user_wishlist_appids,
-    get_user_library_games
+    get_user_library_games,
+    clear_sample_data,
+    clear_all_games
 )
 from app.steam_client import SteamClient
 
@@ -17,7 +19,7 @@ MONTH_NAMES_ES = [
 ]
 
 def format_day_header(dt: datetime.date, today: datetime.date) -> str:
-    """Devuelve un encabezado legible como 'Hoy', 'Mañana' o 'Viernes, 14 de Noviembre'."""
+    """Devuelve un encabezado amigable como 'Hoy', 'Mañana' o 'Viernes, 14 de Noviembre'."""
     delta = (dt - today).days
     if delta == 0:
         return "Hoy"
@@ -34,9 +36,14 @@ class CalendarService:
     def __init__(self, api_key: Optional[str] = None):
         self.steam_client = SteamClient(api_key=api_key)
 
-    def sync_upcoming_games(self) -> List[Dict[str, Any]]:
-        """Sincroniza y guarda los lanzamientos populares de Steam en SQLite."""
-        games = self.steam_client.fetch_popular_upcoming(count=100)
+    def sync_upcoming_games(self, clear_first: bool = False) -> List[Dict[str, Any]]:
+        """Sincroniza y guarda los lanzamientos reales de Steam en SQLite."""
+        if clear_first:
+            clear_all_games()
+        else:
+            clear_sample_data()
+
+        games = self.steam_client.fetch_popular_upcoming(max_items=150)
         if games:
             save_games_batch(games)
         return games
@@ -46,9 +53,13 @@ class CalendarService:
         Organiza los lanzamientos en la estructura del Steam Personal Calendar:
         - timeline_days: Lista de días con sus respectivos juegos (Rolling Day-by-Day).
         - fuzzy_tray: Juegos con fechas no cerradas (Mes, Trimestre, TBA).
-        - user_stats: Resumen de deseados y biblioteca.
+        - stats: Resumen de totales.
         """
+        # Eliminar cualquier rastro antiguo de datos de muestra
+        clear_sample_data()
+
         cached_games = get_cached_games()
+        # Si no hay juegos reales en caché, sincronizar desde Steam
         if not cached_games:
             cached_games = self.sync_upcoming_games()
 
@@ -58,12 +69,18 @@ class CalendarService:
             wishlist_ids = set(get_user_wishlist_appids(steam_id))
             library_games = get_user_library_games(steam_id)
 
-        # Identificar nombres de juegos en biblioteca para detectar DLCs
-        owned_names = [g["name"].lower() for g in library_games]
+            # Si el usuario tiene deseados, sincronizar detalles para asegurar que sus fechas exactas están en DB
+            if wishlist_ids:
+                missing_wishlist_appids = [aid for aid in wishlist_ids if not any(g["appid"] == aid for g in cached_games)]
+                if missing_wishlist_appids:
+                    wishlist_games = self.steam_client.fetch_wishlist_games_details(missing_wishlist_appids)
+                    if wishlist_games:
+                        save_games_batch(wishlist_games)
+                        cached_games = get_cached_games()
 
+        owned_names = [g["name"].lower() for g in library_games]
         today = datetime.date.today()
         
-        # Estructuras para agrupar
         days_map: Dict[str, List[Dict[str, Any]]] = {}
         fuzzy_list: List[Dict[str, Any]] = []
 
@@ -72,7 +89,6 @@ class CalendarService:
             appid = game_item["appid"]
             name_lower = game_item["name"].lower()
 
-            # Añadir marcas de personalización
             is_wishlisted = appid in wishlist_ids
             is_dlc_owned = any(owned in name_lower and owned != name_lower for owned in owned_names)
 
@@ -84,9 +100,17 @@ class CalendarService:
             precision = game_item.get("precision", "TBA")
 
             if precision == "EXACT_DAY" and cal_date_str:
-                if cal_date_str not in days_map:
-                    days_map[cal_date_str] = []
-                days_map[cal_date_str].append(game_item)
+                try:
+                    dt_val = datetime.date.fromisoformat(cal_date_str)
+                    # Ventana oficial de Steam: lanzamientos recientes (últimas 2 semanas) y todos los futuros
+                    if dt_val >= today - datetime.timedelta(days=14):
+                        if cal_date_str not in days_map:
+                            days_map[cal_date_str] = []
+                        days_map[cal_date_str].append(game_item)
+                    else:
+                        fuzzy_list.append(game_item)
+                except ValueError:
+                    fuzzy_list.append(game_item)
             else:
                 fuzzy_list.append(game_item)
 
@@ -105,7 +129,7 @@ class CalendarService:
                 "games": sorted(days_map[d_str], key=lambda x: (not x["is_wishlisted"], x["name"]))
             })
 
-        # Ordenar fechas difusas (Meses y Trimestres primero, TBA al final)
+        # Ordenar fechas difusas
         fuzzy_priority = {"MONTH": 1, "QUARTER": 2, "YEAR": 3, "TBA": 4}
         sorted_fuzzy = sorted(fuzzy_list, key=lambda x: (
             fuzzy_priority.get(x.get("precision"), 5),

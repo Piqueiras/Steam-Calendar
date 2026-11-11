@@ -160,6 +160,20 @@ def save_games_batch(games_list: List[Dict[str, Any]]) -> None:
             ))
         conn.commit()
 
+def clear_sample_data() -> None:
+    """Elimina cualquier juego de muestra antiguo de la base de datos."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM games WHERE source = 'SAMPLE_DATA'")
+        conn.commit()
+
+def clear_all_games() -> None:
+    """Limpia todos los juegos cacheados para forzar una sincronización limpia."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM games")
+        conn.commit()
+
 def get_cached_games() -> List[Dict[str, Any]]:
     """Devuelve todos los juegos cacheados."""
     with get_connection() as conn:

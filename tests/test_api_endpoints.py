@@ -40,3 +40,12 @@ def test_routes():
     assert res_good_key.status_code == 200
     res_status2 = client.get("/api/user/status")
     assert json.loads(res_status2.data)["has_api_key"] is True
+
+    # 7. API Set Manual SteamID
+    res_set_id = client.post("/api/user/set-steamid", json={"steam_id_or_url": "76561198012345678"})
+    assert res_set_id.status_code == 200
+    assert json.loads(res_set_id.data)["steam_id"] == "76561198012345678"
+
+    # 8. API Set Empty SteamID
+    res_set_empty = client.post("/api/user/set-steamid", json={"steam_id_or_url": ""})
+    assert res_set_empty.status_code == 400

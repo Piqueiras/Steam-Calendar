@@ -83,14 +83,17 @@ def api_calendar():
 
 @app.route("/api/calendar/sync", methods=["POST"])
 def api_sync():
-    """Fuerza la sincronización con los servidores de Steam."""
-    games = calendar_service.sync_upcoming_games()
+    """Fuerza la sincronización con los servidores de Steam limpiando la caché previa."""
+    games = calendar_service.sync_upcoming_games(clear_first=True)
     steam_id = session.get("steam_id")
     if steam_id:
         client = SteamClient()
         wishlist_ids = client.fetch_user_wishlist(steam_id)
         if wishlist_ids:
             save_user_wishlist(steam_id, wishlist_ids)
+            wishlist_games = client.fetch_wishlist_games_details(wishlist_ids)
+            if wishlist_games:
+                save_games_batch(wishlist_games)
         library_games = client.fetch_user_library(steam_id)
         if library_games:
             save_user_library(steam_id, library_games)
@@ -126,6 +129,36 @@ def api_save_key():
     calendar_service = CalendarService(api_key=new_key)
     
     return jsonify({"success": True, "has_key": bool(new_key)})
+
+@app.route("/api/user/set-steamid", methods=["POST"])
+def api_set_steamid():
+    """Permite fijar manualmente el SteamID o Vanity URL sin pasar por OpenID."""
+    data = request.get_json() or {}
+    identifier = data.get("steam_id_or_url", "").strip()
+    if not identifier:
+        return jsonify({"success": False, "error": "Debes proporcionar un SteamID o URL personalizada."}), 400
+
+    client = SteamClient()
+    resolved_id = client.resolve_vanity_url(identifier)
+    if not resolved_id:
+        return jsonify({"success": False, "error": "No se pudo resolver el SteamID. Asegúrate de que el formato es correcto o de tener la API Key configurada."}), 400
+
+    session["steam_id"] = resolved_id
+    user_summary = client.fetch_player_summary(resolved_id)
+    session["user_info"] = user_summary or {
+        "personaname": f"Steam User ({resolved_id[-4:]})",
+        "avatar": "https://avatars.steamstatic.com/fef49e7fa7e1997310d705b2a6158ff8dc1cdfeb_full.jpg"
+    }
+
+    wishlist_ids = client.fetch_user_wishlist(resolved_id)
+    if wishlist_ids:
+        save_user_wishlist(resolved_id, wishlist_ids)
+
+    library_games = client.fetch_user_library(resolved_id)
+    if library_games:
+        save_user_library(resolved_id, library_games)
+
+    return jsonify({"success": True, "steam_id": resolved_id, "wishlist_count": len(wishlist_ids)})
 
 @app.route("/api/user/status")
 def api_user_status():
