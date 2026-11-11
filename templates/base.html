@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Steam Personal Calendar - Calendario de Próximos Lanzamientos{% endblock %}</title>
+    <!-- Tailwind CSS (CDN para carga instantánea sin compilador Node) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/steam_theme.css') }}">
+    <link rel="icon" href="https://store.steampowered.com/favicon.ico">
+</head>
+<body class="bg-[#0e141b] text-[#c7d5e0] font-sans antialiased min-h-screen flex flex-col selection:bg-[#66c0f4] selection:text-white">
+
+    <!-- BARRA SUPERIOR DE NAVEGACIÓN -->
+    <header class="bg-[#171d25] border-b border-[#2a3844] sticky top-0 z-40 shadow-lg">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+            
+            <!-- LOGO Y TÍTULO -->
+            <div class="flex items-center space-x-3">
+                <svg class="w-8 h-8 text-[#66c0f4]" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M12 2a10 10 0 0 0-10 10c0 4.67 3.2 8.59 7.55 9.68l2.9-4.22a3.5 3.5 0 0 1-1.45-2.8 3.5 3.5 0 0 1 3.5-3.5c.34 0 .66.05.97.14l2.8-4.08A4.97 4.97 0 0 0 12 7a5 5 0 0 0-5 5c0 1.93 1.1 3.6 2.7 4.43l-2.6 3.79A9.96 9.96 0 0 1 2 12C2 6.48 6.48 2 12 2m4.84 5.92a2.5 2.5 0 0 1 2.5 2.5 2.5 2.5 0 0 1-2.5 2.5 2.5 2.5 0 0 1-2.5-2.5 2.5 2.5 0 0 1 2.5-2.5m-3.34 8.58a1.5 1.5 0 0 0-1.5 1.5 1.5 1.5 0 0 0 1.5 1.5 1.5 1.5 0 0 0 1.5-1.5 1.5 1.5 0 0 0-1.5-1.5z"/>
+                </svg>
+                <div>
+                    <span class="text-white font-bold text-lg tracking-wide uppercase">Steam</span>
+                    <span class="text-[#66c0f4] font-medium text-xs block -mt-1 tracking-wider uppercase">Personal Calendar</span>
+                </div>
+            </div>
+
+            <!-- CONTROLES Y ACCIONES -->
+            <div class="flex items-center space-x-3">
+                
+                <!-- BOTÓN ESTADO API KEY -->
+                <button onclick="openApiKeyModal()" class="flex items-center space-x-2 text-xs py-1.5 px-3 rounded border transition-colors {% if has_api_key %}bg-[#1b2838] border-[#a4d007]/50 text-[#a4d007] hover:bg-[#223549]{% else %}bg-[#242618] border-[#e5a00d]/50 text-[#e5a00d] hover:bg-[#323520]{% endif %}">
+                    <span class="w-2 h-2 rounded-full {% if has_api_key %}bg-[#a4d007]{% else %}bg-[#e5a00d] animate-pulse{% endif %}"></span>
+                    <span>{% if has_api_key %}API Key Activa{% else %}Configurar API Key{% endif %}</span>
+                </button>
+
+                <!-- BOTÓN SINCRONIZAR -->
+                <button id="btn-sync" onclick="syncSteamData()" class="p-2 text-gray-400 hover:text-white bg-[#1b2838] hover:bg-[#2a3f5a] rounded border border-[#2a3844] transition-all" title="Sincronizar datos con Steam">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                    </svg>
+                </button>
+
+                <!-- BOTÓN EXPORTAR ICAL -->
+                <a href="{{ url_for('api_export_ics') }}" class="flex items-center space-x-1.5 bg-[#1b2838] hover:bg-[#2a3f5a] text-xs py-1.5 px-3 rounded border border-[#2a3844] text-gray-300 hover:text-white transition-all">
+                    <svg class="w-3.5 h-3.5 text-[#66c0f4]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
+                    </svg>
+                    <span>Feed iCal</span>
+                </a>
+
+                <!-- PERFIL / LOGIN CON STEAM -->
+                {% if steam_id %}
+                    <div class="flex items-center space-x-2 pl-2 border-l border-[#2a3844]">
+                        <img src="{{ user_info.avatar or 'https://avatars.steamstatic.com/fef49e7fa7e1997310d705b2a6158ff8dc1cdfeb_full.jpg' }}" alt="Avatar" class="w-8 h-8 rounded-full border border-[#66c0f4]/40">
+                        <span class="text-xs font-semibold text-white truncate max-w-[120px]">{{ user_info.personaname or 'Mi Perfil' }}</span>
+                        <a href="{{ url_for('logout') }}" class="text-xs text-gray-400 hover:text-red-400 ml-1" title="Cerrar sesión">Salir</a>
+                    </div>
+                {% else %}
+                    <a href="{{ url_for('steam_login') }}" class="flex items-center space-x-2 bg-gradient-to-r from-[#5c7e10] to-[#799905] hover:from-[#6b9313] hover:to-[#8cb006] text-white text-xs font-bold py-1.5 px-3 rounded shadow transition-all">
+                        <img src="https://community.cloudflare.steamstatic.com/public/images/signinthroughsteam/sits_01.png" alt="Steam" class="h-4">
+                        <span>Iniciar Sesión</span>
+                    </a>
+                {% endif %}
+
+            </div>
+        </div>
+    </header>
+
+    <!-- CONTENIDO PRINCIPAL -->
+    <main class="flex-grow max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 w-full">
+        {% block content %}{% endblock %}
+    </main>
+
+    <!-- FOOTER -->
+    <footer class="bg-[#101822] border-t border-[#1b2838] py-4 text-center text-xs text-gray-500">
+        <p>Steam Personal Calendar • Desarrollado para seguimiento de próximos estrenos • Válido para Steamworks API y Steam Store</p>
+    </footer>
+
+    {% block scripts %}{% endblock %}
+</body>
+</html>
