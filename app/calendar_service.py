@@ -72,20 +72,22 @@ class CalendarService:
             library_games = get_user_library_games(steam_id)
             user_owned_appids = set(g["appid"] for g in library_games)
 
-            # Si el usuario tiene deseados, sincronizar detalles para asegurar que sus fechas exactas y categorías están en DB
-            if wishlist_ids:
-                missing_wishlist_appids = [aid for aid in wishlist_ids if not any(g["appid"] == aid for g in cached_games)]
-                stale_wishlist_appids = [
+            # Sincronizar detalles tanto para deseados como para juegos comprados en la biblioteca
+            user_target_appids = list(wishlist_ids.union(user_owned_appids))
+            if user_target_appids:
+                cached_appids_set = set(g["appid"] for g in cached_games)
+                missing_appids = [aid for aid in user_target_appids if aid not in cached_appids_set]
+                stale_appids = [
                     g["appid"] for g in cached_games 
-                    if g["appid"] in wishlist_ids and (
+                    if g["appid"] in user_target_appids and (
                         g.get("tags") in [["Juego en Seguimiento"], ["Próximo Estreno"], []]
                     )
                 ][:50]
-                to_fetch = list(set(missing_wishlist_appids + stale_wishlist_appids))
+                to_fetch = list(set(missing_appids[:100] + stale_appids))
                 if to_fetch:
-                    wishlist_games = self.steam_client.fetch_wishlist_games_details(to_fetch)
-                    if wishlist_games:
-                        save_games_batch(wishlist_games)
+                    synced_games = self.steam_client.fetch_wishlist_games_details(to_fetch)
+                    if synced_games:
+                        save_games_batch(synced_games)
                         cached_games = get_cached_games()
 
         today = datetime.date.today()
@@ -104,6 +106,7 @@ class CalendarService:
             is_dlc_owned = bool(parent_appid and parent_appid in user_owned_appids)
 
             is_wishlisted = appid in wishlist_ids
+            is_owned = appid in user_owned_appids
 
             # Normalización y detección de la categoría del lanzamiento
             rel_cat = game_item.get("release_category")
@@ -120,6 +123,7 @@ class CalendarService:
                     rel_cat = "FIRST_RELEASE"
 
             game_item["is_wishlisted"] = is_wishlisted
+            game_item["is_owned"] = is_owned
             game_item["is_dlc"] = is_dlc
             game_item["is_owned_base_game"] = is_dlc_owned
             game_item["release_category"] = rel_cat
@@ -163,14 +167,14 @@ class CalendarService:
                 "formatted_date": f"{dt.day} {MONTH_NAMES_ES[dt.month - 1]} {dt.year}",
                 "is_today": dt == today,
                 "is_past": dt < today,
-                "games": sorted(days_map[d_str], key=lambda x: (not x["is_wishlisted"], x["name"]))
+                "games": sorted(days_map[d_str], key=lambda x: (not (x["is_wishlisted"] or x.get("is_owned")), x["name"]))
             })
 
         # Ordenar fechas difusas
         fuzzy_priority = {"MONTH": 1, "QUARTER": 2, "YEAR": 3, "TBA": 4}
         sorted_fuzzy = sorted(fuzzy_list, key=lambda x: (
             fuzzy_priority.get(x.get("precision"), 5),
-            not x["is_wishlisted"],
+            not (x["is_wishlisted"] or x.get("is_owned")),
             x.get("display_badge", "")
         ))
 
@@ -178,6 +182,7 @@ class CalendarService:
         total_release_1_0 = sum(1 for g in all_games if g.get("release_category") == "RELEASE_1_0")
         total_first_release = sum(1 for g in all_games if g.get("release_category") == "FIRST_RELEASE")
         total_dlc = sum(1 for g in all_games if g.get("is_owned_base_game"))
+        total_library_owned = sum(1 for g in all_games if g.get("is_owned"))
 
         return {
             "today_iso": today.isoformat(),
@@ -190,15 +195,16 @@ class CalendarService:
                 "total_fuzzy_games": len(sorted_fuzzy),
                 "wishlist_count": len(wishlist_ids),
                 "library_count": len(library_games),
+                "library_owned_count": total_library_owned,
                 "dlc_count": total_dlc,
                 "release_1_0_count": total_release_1_0,
                 "first_release_count": total_first_release
             }
         }
 
-    def export_ical_feed(self, steam_id: Optional[str] = None, wishlist_only: bool = False) -> str:
+    def export_ical_feed(self, steam_id: Optional[str] = None, wishlist_only: bool = False, library_only: bool = False, include_past: bool = False) -> str:
         """Genera un feed iCalendar (.ics) estándar RFC 5545 para suscripción externa."""
-        cal_data = self.get_personal_calendar(steam_id=steam_id)
+        cal_data = self.get_personal_calendar(steam_id=steam_id, include_past=include_past)
         
         cal = Calendar()
         cal.add("prodid", "-//Steam Personal Calendar//ES")
@@ -211,9 +217,16 @@ class CalendarService:
             for g in day["games"]:
                 if wishlist_only and not g.get("is_wishlisted"):
                     continue
+                if library_only and not g.get("is_owned"):
+                    continue
 
                 event = Event()
-                prefix = "⭐ " if g.get("is_wishlisted") else ""
+                prefix = ""
+                if g.get("is_wishlisted"):
+                    prefix = "⭐ "
+                elif g.get("is_owned"):
+                    prefix = "📚 "
+
                 event.add("summary", f"{prefix}{g['name']}")
                 event.add("dtstart", vDate(dt))
                 event.add("dtend", vDate(dt + datetime.timedelta(days=1)))
@@ -226,6 +239,8 @@ class CalendarService:
                 ]
                 if g.get("is_wishlisted"):
                     desc_lines.append("Estado: ¡En tu lista de deseados de Steam!")
+                if g.get("is_owned"):
+                    desc_lines.append("Estado: ¡Comprado en tu biblioteca de Steam!")
                 if g.get("is_owned_base_game"):
                     desc_lines.append("Nota: ¡Posees el juego base en tu biblioteca!")
 

@@ -23,6 +23,10 @@ def test_routes():
     assert res_ics.status_code == 200
     assert b"BEGIN:VCALENDAR" in res_ics.data
 
+    res_ics_lib = client.get("/api/calendar/export.ics?library_only=1")
+    assert res_ics_lib.status_code == 200
+    assert b"BEGIN:VCALENDAR" in res_ics_lib.data
+
     # 4. API User Status
     res_status = client.get("/api/user/status")
     assert res_status.status_code == 200

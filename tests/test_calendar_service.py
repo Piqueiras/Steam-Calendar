@@ -167,6 +167,32 @@ def test_early_access_graduation_vs_first_release_logic():
     assert cat_text == "RELEASE_1_0"
     assert is_ea_text is True
 
+def test_calendar_service_with_library_owned_games():
+    from app.db import save_user_library, get_cached_games
+    init_db()
+    service = CalendarService()
+    cal_init = service.get_personal_calendar(include_past=False)
+    if not cal_init["timeline_days"]:
+        return
+    sample_game = cal_init["timeline_days"][0]["games"][0]
+    sample_appid = sample_game["appid"]
+
+    test_steam_id = "76561198000000001"
+    save_user_library(test_steam_id, [{"appid": sample_appid, "name": sample_game["name"], "playtime_forever": 120}])
+
+    cal_data = service.get_personal_calendar(steam_id=test_steam_id, include_past=False)
+
+    all_returned_games = [g for d in cal_data["timeline_days"] for g in d["games"]] + cal_data["fuzzy_tray"]
+    matched = [g for g in all_returned_games if g["appid"] == sample_appid]
+    assert len(matched) > 0
+    assert matched[0]["is_owned"] is True
+    assert cal_data["stats"]["library_owned_count"] >= 1
+
+    # Comprobar exportación iCal con filtro de biblioteca
+    ical_owned = service.export_ical_feed(steam_id=test_steam_id, library_only=True)
+    assert "BEGIN:VCALENDAR" in ical_owned
+    assert "steam-game-" + str(sample_appid) in ical_owned
+
 def test_no_hardcoded_games_in_app():
     import os
     import re

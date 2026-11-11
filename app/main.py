@@ -96,12 +96,16 @@ def api_sync():
         wishlist_ids = client.fetch_user_wishlist(steam_id)
         if wishlist_ids:
             save_user_wishlist(steam_id, wishlist_ids)
-            wishlist_games = client.fetch_wishlist_games_details(wishlist_ids)
-            if wishlist_games:
-                save_games_batch(wishlist_games)
         library_games = client.fetch_user_library(steam_id)
         if library_games:
             save_user_library(steam_id, library_games)
+            
+        owned_appids = [g["appid"] for g in library_games] if library_games else []
+        all_user_appids = list(set((wishlist_ids or []) + owned_appids))
+        if all_user_appids:
+            user_games = client.fetch_wishlist_games_details(all_user_appids[:100])
+            if user_games:
+                save_games_batch(user_games)
     return jsonify({"success": True, "count": len(games)})
 
 @app.route("/api/search")
@@ -137,7 +141,8 @@ def api_export_ics():
     """Genera el feed de suscripción a iCalendar (.ics)."""
     steam_id = session.get("steam_id") or request.args.get("steam_id")
     wishlist_only = request.args.get("wishlist_only", "0") in ["1", "true", "True"]
-    ics_content = calendar_service.export_ical_feed(steam_id=steam_id, wishlist_only=wishlist_only)
+    library_only = request.args.get("library_only", "0") in ["1", "true", "True"]
+    ics_content = calendar_service.export_ical_feed(steam_id=steam_id, wishlist_only=wishlist_only, library_only=library_only)
     
     return Response(
         ics_content,

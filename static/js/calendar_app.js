@@ -19,8 +19,8 @@ async function loadCalendarData() {
         const res = await fetch(url);
         if (res.ok) {
             calendarData = await res.json();
-            // Si el usuario no está autenticado y estaba en wishlist o dlc, volver a 'all'
-            if (!calendarData.is_authenticated && ['wishlist', 'dlc'].includes(currentFilter)) {
+            // Si el usuario no está autenticado y estaba en wishlist, dlc o library, volver a 'all'
+            if (!calendarData.is_authenticated && ['wishlist', 'dlc', 'library'].includes(currentFilter)) {
                 setFilter('all');
             } else {
                 updateStatsCounts();
@@ -47,6 +47,7 @@ function toggleIncludePast() {
 function updateStatsCounts() {
     let totalAll = 0;
     let totalWishlist = 0;
+    let totalLibrary = 0;
     let totalDlc = 0;
     let totalRelease10 = 0;
     let totalFirstRelease = 0;
@@ -54,6 +55,7 @@ function updateStatsCounts() {
     const countGame = (g) => {
         totalAll++;
         if (g.is_wishlisted) totalWishlist++;
+        if (g.is_owned) totalLibrary++; // Juegos comprados que posees en tu biblioteca
         if (g.is_owned_base_game) totalDlc++; // Solo cuenta DLCs cuyo juego base esté en la biblioteca del usuario
         if (g.release_category === 'RELEASE_1_0') totalRelease10++;
         if (g.release_category === 'FIRST_RELEASE') totalFirstRelease++;
@@ -74,6 +76,7 @@ function updateStatsCounts() {
 
     setEl('count-all', totalAll);
     setEl('count-wishlist', totalWishlist);
+    setEl('count-library', totalLibrary);
     setEl('count-dlc', totalDlc);
     setEl('count-release-10', totalRelease10);
     setEl('count-first-release', totalFirstRelease);
@@ -94,6 +97,7 @@ function renderCalendar() {
         // Filtrar juegos del día
         const filteredGames = day.games.filter(g => {
             if (currentFilter === 'wishlist' && !g.is_wishlisted) return false;
+            if (currentFilter === 'library' && !g.is_owned) return false;
             if (currentFilter === 'dlc' && !g.is_owned_base_game) return false;
             if (currentFilter === 'release-10' && g.release_category !== 'RELEASE_1_0') return false;
             if (currentFilter === 'first-release' && g.release_category !== 'FIRST_RELEASE') return false;
@@ -170,6 +174,13 @@ function createGameCard(g) {
         <span class="badge-wishlist text-[10px] px-2 py-0.5 rounded shadow flex items-center space-x-1">
             <span>⭐</span>
             <span>EN TU WISHLIST</span>
+        </span>
+    ` : '';
+
+    const ownedBadge = g.is_owned ? `
+        <span class="badge-library text-[10px] px-2 py-0.5 rounded shadow flex items-center space-x-1" title="Juego comprado que tienes en tu biblioteca de Steam">
+            <span>📚</span>
+            <span>EN TU BIBLIOTECA</span>
         </span>
     ` : '';
 
@@ -250,6 +261,7 @@ function createGameCard(g) {
             
             <div class="absolute top-2 left-2 flex flex-col space-y-1">
                 ${wishlistBadge}
+                ${ownedBadge}
                 ${dlcBadge}
                 ${categoryBadge}
             </div>
@@ -294,6 +306,7 @@ function renderFuzzyTray() {
 
     const filteredFuzzy = calendarData.fuzzy_tray.filter(g => {
         if (currentFilter === 'wishlist' && !g.is_wishlisted) return false;
+        if (currentFilter === 'library' && !g.is_owned) return false;
         if (currentFilter === 'dlc' && !g.is_owned_base_game) return false;
         if (currentFilter === 'release-10' && g.release_category !== 'RELEASE_1_0') return false;
         if (currentFilter === 'first-release' && g.release_category !== 'FIRST_RELEASE') return false;
@@ -321,8 +334,9 @@ function renderFuzzyTray() {
         const item = document.createElement('div');
         item.className = 'bg-[#101822] p-2.5 rounded border border-[#233140] hover:border-[#66c0f4] transition-all';
 
-        const badgeColor = g.is_wishlisted ? 'text-green-400 font-bold' : 'text-yellow-400';
+        const badgeColor = g.is_wishlisted ? 'text-green-400 font-bold' : (g.is_owned ? 'text-blue-400 font-bold' : 'text-yellow-400');
         const dlcBadge = g.is_owned_base_game ? '<span class="text-[10px] text-sky-400 font-bold block">📦 DLC de biblioteca</span>' : '';
+        const libraryBadge = g.is_owned ? '<span class="text-[10px] text-blue-400 font-bold block">📚 En tu biblioteca</span>' : '';
 
         let categoryPill = '';
         if (g.release_category === 'RELEASE_1_0') {
@@ -349,9 +363,10 @@ function renderFuzzyTray() {
                         ${categoryPill}
                     </div>
                     ${dlcBadge}
+                    ${libraryBadge}
                     <div class="flex items-center justify-between mt-1 text-[11px]">
                         <span class="${badgeColor}">📅 ${g.display_badge}</span>
-                        ${reviewPill || (g.is_wishlisted ? '<span class="text-[10px] text-green-400 font-bold">★ Wishlist</span>' : '')}
+                        ${reviewPill || (g.is_wishlisted ? '<span class="text-[10px] text-green-400 font-bold">★ Wishlist</span>' : (g.is_owned ? '<span class="text-[10px] text-blue-400 font-bold">📚 Biblioteca</span>' : ''))}
                     </div>
                 </div>
             </div>
