@@ -48,12 +48,13 @@ class CalendarService:
             save_games_batch(games)
         return games
 
-    def get_personal_calendar(self, steam_id: Optional[str] = None) -> Dict[str, Any]:
+    def get_personal_calendar(self, steam_id: Optional[str] = None, include_past: bool = False) -> Dict[str, Any]:
         """
         Organiza los lanzamientos en la estructura del Steam Personal Calendar:
         - timeline_days: Lista de días con sus respectivos juegos (Rolling Day-by-Day).
         - fuzzy_tray: Juegos con fechas no cerradas (Mes, Trimestre, TBA).
         - stats: Resumen de totales.
+        - include_past: Si es True, incluye las 2 semanas anteriores; si es False, solo desde hoy.
         """
         # Eliminar cualquier rastro antiguo de datos de muestra
         clear_sample_data()
@@ -64,10 +65,12 @@ class CalendarService:
             cached_games = self.sync_upcoming_games()
 
         wishlist_ids = set()
+        user_owned_appids = set()
         library_games = []
         if steam_id:
             wishlist_ids = set(get_user_wishlist_appids(steam_id))
             library_games = get_user_library_games(steam_id)
+            user_owned_appids = set(g["appid"] for g in library_games)
 
             # Si el usuario tiene deseados, sincronizar detalles para asegurar que sus fechas exactas están en DB
             if wishlist_ids:
@@ -78,21 +81,29 @@ class CalendarService:
                         save_games_batch(wishlist_games)
                         cached_games = get_cached_games()
 
-        owned_names = [g["name"].lower() for g in library_games]
         today = datetime.date.today()
-        
         days_map: Dict[str, List[Dict[str, Any]]] = {}
         fuzzy_list: List[Dict[str, Any]] = []
 
         for g in cached_games:
+            # Si el usuario ha cerrado sesión, no mostrar juegos que solo procedían de su lista privada
+            if not steam_id and g.get("source") == "WISHLIST_API":
+                continue
+
             game_item = dict(g)
             appid = game_item["appid"]
-            name_lower = game_item["name"].lower()
+
+            # Comprobación de DLC oficial de Steam:
+            # Solo es DLC de tu biblioteca si tiene un parent_appid y ese parent_appid está en tu biblioteca
+            parent_appid = game_item.get("parent_appid")
+            item_type = game_item.get("item_type", "GAME")
+            is_dlc = item_type == "DLC" or bool(parent_appid)
+            is_dlc_owned = bool(parent_appid and parent_appid in user_owned_appids)
 
             is_wishlisted = appid in wishlist_ids
-            is_dlc_owned = any(owned in name_lower and owned != name_lower for owned in owned_names)
 
             game_item["is_wishlisted"] = is_wishlisted
+            game_item["is_dlc"] = is_dlc
             game_item["is_owned_base_game"] = is_dlc_owned
             game_item["steam_store_url"] = f"https://store.steampowered.com/app/{appid}/"
 
@@ -102,12 +113,17 @@ class CalendarService:
             if precision == "EXACT_DAY" and cal_date_str:
                 try:
                     dt_val = datetime.date.fromisoformat(cal_date_str)
-                    # Ventana oficial de Steam: lanzamientos recientes (últimas 2 semanas) y todos los futuros
-                    if dt_val >= today - datetime.timedelta(days=14):
+                    # Si no queremos pasados y el juego es anterior a hoy, omitirlo
+                    if not include_past and dt_val < today:
+                        continue
+
+                    # Ventana válida: si include_past es True, permite desde hace 14 días
+                    min_date = (today - datetime.timedelta(days=14)) if include_past else today
+                    if dt_val >= min_date:
                         if cal_date_str not in days_map:
                             days_map[cal_date_str] = []
                         days_map[cal_date_str].append(game_item)
-                    else:
+                    elif include_past:
                         fuzzy_list.append(game_item)
                 except ValueError:
                     fuzzy_list.append(game_item)

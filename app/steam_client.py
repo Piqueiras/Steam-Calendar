@@ -34,12 +34,13 @@ class SteamClient:
         self.base_web_url = "https://api.steampowered.com"
         self.base_store_url = "https://store.steampowered.com"
 
-    def fetch_popular_upcoming(self, max_items: int = 150) -> List[Dict[str, Any]]:
+    def fetch_popular_upcoming(self, max_items: int = 250) -> List[Dict[str, Any]]:
         """
-        Consulta los próximos lanzamientos REALES desde los servidores oficiales de Steam.
+        Consulta los próximos lanzamientos REALES y lanzamientos recientes desde los servidores de Steam.
         Utiliza IStoreQueryService con la API Key del usuario y complementa con featuredcategories.
         """
-        games_dict: Dict[int, Dict[str, Any]] = {}
+        upcoming_dict: Dict[int, Dict[str, Any]] = {}
+        recent_dict: Dict[int, Dict[str, Any]] = {}
 
         # 1. Consulta oficial con IStoreQueryService si se dispone de API Key
         if self.api_key:
@@ -53,7 +54,7 @@ class SteamClient:
                                 "sort": sort_type,
                                 "filters": {
                                     "coming_soon_only": True,
-                                    "type_filters": {"include_games": True}
+                                    "type_filters": {"include_games": True, "include_dlc": True}
                                 }
                             },
                             "context": {
@@ -76,7 +77,7 @@ class SteamClient:
                             items = data.get("store_items", []) or data.get("items", [])
                             for it in items:
                                 appid = it.get("id") or it.get("appid")
-                                if not appid or appid in games_dict:
+                                if not appid or appid in upcoming_dict:
                                     continue
 
                                 name = it.get("name", f"App {appid}")
@@ -91,17 +92,26 @@ class SteamClient:
                                     display_type=display_type
                                 )
 
-                                # Etiquetas básicas
+                                # Identificación real de DLC mediante la API oficial de Steam
+                                type_id = it.get("type", 0)
+                                rel_items = it.get("related_items", {})
+                                parent_appid = rel_items.get("parent_appid")
+                                is_dlc = type_id in [1, 4] or bool(parent_appid)
+                                item_type = "DLC" if is_dlc else "GAME"
+
+                                # Etiquetas
                                 basic = it.get("basic_info", {})
                                 tags = []
-                                if basic.get("short_description"):
+                                if is_dlc:
+                                    tags.append("DLC / Expansión")
+                                elif basic.get("short_description"):
                                     tags.append("Juego Oficial")
                                 else:
                                     tags.append("Próximo Estreno")
 
                                 header_url, capsule_url = _extract_asset_urls(it, appid)
 
-                                games_dict[appid] = {
+                                upcoming_dict[appid] = {
                                     "appid": appid,
                                     "name": name,
                                     "raw_date_str": date_info["raw_date_str"],
@@ -114,10 +124,82 @@ class SteamClient:
                                     "price_str": "Por confirmar",
                                     "is_free": False,
                                     "deck_status": "UNKNOWN",
+                                    "item_type": item_type,
+                                    "parent_appid": parent_appid,
                                     "source": "STEAM_API"
                                 }
                 except Exception as e:
                     logger.warning(f"Error consultando IStoreQueryService (sort={sort_type}): {e}")
+
+            # 1.1 Consultar también los lanzamientos recientes de las últimas 2 semanas
+            try:
+                with httpx.Client(timeout=10.0) as client:
+                    payload_recent = {
+                        "query": {
+                            "start": 0,
+                            "count": 50,
+                            "sort": 20,
+                            "filters": {
+                                "released_only": True,
+                                "type_filters": {"include_games": True, "include_dlc": True}
+                            }
+                        },
+                        "context": {
+                            "language": "spanish",
+                            "country_code": "ES",
+                            "steam_realm": 1
+                        },
+                        "data_request": {
+                            "include_basic_info": True,
+                            "include_release": True,
+                            "include_assets": True
+                        }
+                    }
+                    res = client.get(
+                        f"{self.base_web_url}/IStoreQueryService/Query/v1/",
+                        params={"key": self.api_key, "input_json": json.dumps(payload_recent)}
+                    )
+                    if res.status_code == 200:
+                        items = res.json().get("response", {}).get("store_items", [])
+                        for it in items:
+                            appid = it.get("id") or it.get("appid")
+                            if not appid or appid in recent_dict or appid in upcoming_dict:
+                                continue
+
+                            rel = it.get("release", {})
+                            ts = rel.get("steam_release_date")
+                            if not ts:
+                                continue
+
+                            date_info = parse_steam_date("", timestamp=ts)
+                            type_id = it.get("type", 0)
+                            rel_items = it.get("related_items", {})
+                            parent_appid = rel_items.get("parent_appid")
+                            is_dlc = type_id in [1, 4] or bool(parent_appid)
+                            item_type = "DLC" if is_dlc else "GAME"
+
+                            tags = ["DLC / Expansión"] if is_dlc else ["Lanzamiento Reciente"]
+                            header_url, capsule_url = _extract_asset_urls(it, appid)
+
+                            recent_dict[appid] = {
+                                "appid": appid,
+                                "name": it.get("name", f"App {appid}"),
+                                "raw_date_str": date_info["raw_date_str"],
+                                "calendar_date": date_info["calendar_date"],
+                                "precision": date_info["precision"],
+                                "display_badge": date_info["display_badge"],
+                                "header_image": header_url,
+                                "capsule_image": capsule_url,
+                                "tags": tags,
+                                "price_str": "Ya disponible",
+                                "is_free": False,
+                                "deck_status": "UNKNOWN",
+                                "item_type": item_type,
+                                "parent_appid": parent_appid,
+                                "source": "STEAM_RECENT"
+                            }
+            except Exception as e:
+                logger.warning(f"Error consultando lanzamientos recientes: {e}")
 
         # 2. Complementar con el endpoint público de la tienda (featured categories / coming_soon)
         try:
@@ -127,17 +209,16 @@ class SteamClient:
                     cs_items = res.json().get("coming_soon", {}).get("items", [])
                     for it in cs_items:
                         appid = it.get("id")
-                        if not appid or appid in games_dict:
+                        if not appid or appid in upcoming_dict or appid in recent_dict:
                             continue
 
                         name = it.get("name", f"App {appid}")
-                        # Si no tiene fecha estructurada, se asigna TBA
                         date_info = parse_steam_date(it.get("status") or "Próximamente")
                         
                         price_val = it.get("final_price", 0)
                         price_str = f"{price_val / 100:.2f}€" if price_val > 0 else "Por anunciar"
 
-                        games_dict[appid] = {
+                        upcoming_dict[appid] = {
                             "appid": appid,
                             "name": name,
                             "raw_date_str": date_info["raw_date_str"],
@@ -150,13 +231,15 @@ class SteamClient:
                             "price_str": price_str,
                             "is_free": price_val == 0,
                             "deck_status": "UNKNOWN",
+                            "item_type": "GAME",
+                            "parent_appid": None,
                             "source": "STEAM_FEATURED"
                         }
         except Exception as e:
             logger.warning(f"Error consultando featuredcategories: {e}")
 
-        # Devolver la lista completa de juegos reales
-        return list(games_dict.values())[:max_items]
+        # Devolver todos los recientes + los próximos hasta max_items
+        return list(recent_dict.values()) + list(upcoming_dict.values())[:max_items]
 
     def fetch_user_wishlist(self, steam_id: str) -> List[int]:
         """Obtiene la lista de appids deseados por el usuario."""
@@ -225,6 +308,22 @@ class SteamClient:
 
                             header_url, capsule_url = _extract_asset_urls(it, appid)
 
+                            type_id = it.get("type", 0)
+                            rel_items = it.get("related_items", {})
+                            parent_appid = rel_items.get("parent_appid")
+                            is_dlc = type_id in [1, 4] or bool(parent_appid)
+                            item_type = "DLC" if is_dlc else "GAME"
+
+                            tags = []
+                            if is_dlc:
+                                tags.append("DLC / Expansión")
+                            else:
+                                basic = it.get("basic_info", {})
+                                if basic.get("short_description"):
+                                    tags.append("Juego en Seguimiento")
+                                else:
+                                    tags.append("Próximo Estreno")
+
                             detailed_games.append({
                                 "appid": appid,
                                 "name": it.get("name", f"App {appid}"),
@@ -234,10 +333,12 @@ class SteamClient:
                                 "display_badge": date_info["display_badge"],
                                 "header_image": header_url,
                                 "capsule_image": capsule_url,
-                                "tags": ["Wishlist"],
-                                "price_str": "En Deseados",
+                                "tags": tags,
+                                "price_str": "Por confirmar",
                                 "is_free": False,
                                 "deck_status": "UNKNOWN",
+                                "item_type": item_type,
+                                "parent_appid": parent_appid,
                                 "source": "WISHLIST_API"
                             })
             except Exception as e:

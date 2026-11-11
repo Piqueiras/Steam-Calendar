@@ -1,4 +1,5 @@
 import os
+import sys
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -40,9 +41,19 @@ def get_active_steam_api_key() -> str:
     return settings.STEAM_API_KEY
 
 def update_env_api_key(new_key: str) -> None:
-    """Actualiza la clave en el archivo .env y en el entorno en tiempo de ejecución."""
+    """Actualiza la clave en el archivo .env y en el entorno en tiempo de ejecución.
+    Si se está ejecutando en un entorno de pruebas (pytest o TESTING=1), no toca el archivo .env en disco.
+    """
     cleaned_key = new_key.strip()
     os.environ["STEAM_API_KEY"] = cleaned_key
+
+    # Protección: nunca modificar el archivo .env físico durante la ejecución de pruebas
+    if (
+        os.getenv("TESTING") == "1"
+        or "pytest" in sys.modules
+        or os.environ.get("PYTEST_CURRENT_TEST")
+    ):
+        return
 
     lines = []
     found = False

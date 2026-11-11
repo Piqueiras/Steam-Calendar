@@ -35,11 +35,18 @@ def test_routes():
     assert res_bad_key.status_code == 400
 
     # 6. API Settings Save Key (Prueba con clave válida de 32 caracteres)
+    # Se debe actualizar en memoria/sesión sin reescribir el archivo .env en disco
+    from app.config import ENV_PATH
+    env_before = ENV_PATH.read_text(encoding="utf-8") if ENV_PATH.exists() else None
+
     test_key = "12345678901234567890123456789012"
     res_good_key = client.post("/api/settings/api-key", json={"api_key": test_key})
     assert res_good_key.status_code == 200
     res_status2 = client.get("/api/user/status")
     assert json.loads(res_status2.data)["has_api_key"] is True
+
+    if ENV_PATH.exists() and env_before is not None:
+        assert ENV_PATH.read_text(encoding="utf-8") == env_before
 
     # 7. API Set Manual SteamID
     res_set_id = client.post("/api/user/set-steamid", json={"steam_id_or_url": "76561198012345678"})

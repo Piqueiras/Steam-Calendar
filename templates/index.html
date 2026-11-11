@@ -60,6 +60,11 @@
         <button id="filter-deck" onclick="setFilter('deck')" class="filter-btn text-xs font-semibold px-3 py-1.5 rounded border border-[#2a3844] bg-[#1b2838] hover:bg-[#223549] text-gray-300">
             🎮 Steam Deck
         </button>
+
+        <label class="flex items-center space-x-1.5 text-xs text-gray-300 cursor-pointer bg-[#1b2838] hover:bg-[#223549] px-3 py-1.5 rounded border border-[#2a3844] transition-all">
+            <input type="checkbox" id="check-include-past" onchange="toggleIncludePast()" class="rounded bg-[#0e141b] border-gray-600 text-[#66c0f4] focus:ring-0">
+            <span>Ver lanzamientos recientes (últimas 2 semanas)</span>
+        </label>
     </div>
 
     <!-- BUSCADOR EN VIVO -->

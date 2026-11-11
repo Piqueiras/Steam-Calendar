@@ -78,7 +78,8 @@ def logout():
 def api_calendar():
     """API endpoint que devuelve la estructura completa día a día."""
     steam_id = session.get("steam_id") or request.args.get("steam_id")
-    data = calendar_service.get_personal_calendar(steam_id=steam_id)
+    include_past = request.args.get("include_past", "0") in ["1", "true", "True"]
+    data = calendar_service.get_personal_calendar(steam_id=steam_id, include_past=include_past)
     return jsonify(data)
 
 @app.route("/api/calendar/sync", methods=["POST"])

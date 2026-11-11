@@ -6,6 +6,7 @@ let calendarData = {
 };
 
 let currentFilter = 'all'; // 'all', 'wishlist', 'dlc', 'deck'
+let includePast = false;
 
 document.addEventListener('DOMContentLoaded', () => {
     loadCalendarData();
@@ -14,7 +15,8 @@ document.addEventListener('DOMContentLoaded', () => {
 // Carga de datos del calendario
 async function loadCalendarData() {
     try {
-        const res = await fetch('/api/calendar');
+        const url = `/api/calendar?include_past=${includePast ? '1' : '0'}`;
+        const res = await fetch(url);
         if (res.ok) {
             calendarData = await res.json();
             updateStatsCounts();
@@ -26,6 +28,12 @@ async function loadCalendarData() {
     } catch (err) {
         showError('Error de conexión al cargar datos.');
     }
+}
+
+function toggleIncludePast() {
+    const chk = document.getElementById('check-include-past');
+    includePast = chk ? chk.checked : false;
+    loadCalendarData();
 }
 
 // Actualiza los contadores de las pestañas
@@ -203,18 +211,38 @@ function createGameCard(g) {
 // Renderizado de la columna lateral de fechas difusas (Mes / Q / TBA)
 function renderFuzzyTray() {
     const container = document.getElementById('fuzzy-container');
+    const searchQuery = document.getElementById('search-input') ? document.getElementById('search-input').value.toLowerCase().trim() : '';
     container.innerHTML = '';
 
-    if (calendarData.fuzzy_tray.length === 0) {
-        container.innerHTML = '<p class="text-xs text-gray-500">No hay títulos sin día exacto.</p>';
+    const filteredFuzzy = calendarData.fuzzy_tray.filter(g => {
+        if (currentFilter === 'wishlist' && !g.is_wishlisted) return false;
+        if (currentFilter === 'dlc' && !g.is_owned_base_game) return false;
+        if (currentFilter === 'deck' && !['VERIFIED', 'PLAYABLE'].includes(g.deck_status)) return false;
+
+        if (searchQuery) {
+            const nameMatch = g.name.toLowerCase().includes(searchQuery);
+            const tagMatch = g.tags && g.tags.some(t => t.toLowerCase().includes(searchQuery));
+            if (!nameMatch && !tagMatch) return false;
+        }
+        return true;
+    });
+
+    const countFuzzyEl = document.getElementById('count-fuzzy');
+    if (countFuzzyEl) {
+        countFuzzyEl.innerText = filteredFuzzy.length;
+    }
+
+    if (filteredFuzzy.length === 0) {
+        container.innerHTML = '<p class="text-xs text-gray-500 py-2">No hay títulos sin fecha exacta con este filtro.</p>';
         return;
     }
 
-    calendarData.fuzzy_tray.forEach(g => {
+    filteredFuzzy.forEach(g => {
         const item = document.createElement('div');
         item.className = 'bg-[#101822] p-2.5 rounded border border-[#233140] hover:border-[#66c0f4] transition-all';
 
         const badgeColor = g.is_wishlisted ? 'text-green-400 font-bold' : 'text-yellow-400';
+        const dlcBadge = g.is_owned_base_game ? '<span class="text-[10px] text-sky-400 font-bold block">📦 DLC de biblioteca</span>' : '';
 
         item.innerHTML = `
             <div class="flex items-start space-x-2.5">
@@ -223,6 +251,7 @@ function renderFuzzyTray() {
                     <a href="${g.steam_store_url}" target="_blank" class="text-xs font-bold text-gray-200 hover:text-[#66c0f4] truncate block">
                         ${g.name}
                     </a>
+                    ${dlcBadge}
                     <div class="flex items-center justify-between mt-1 text-[11px]">
                         <span class="${badgeColor}">📅 ${g.display_badge}</span>
                         ${g.is_wishlisted ? '<span class="text-[10px] text-green-400 font-bold">★ Wishlist</span>' : ''}
@@ -240,10 +269,12 @@ function setFilter(filterType) {
     document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
     document.getElementById(`filter-${filterType}`).classList.add('active');
     renderCalendar();
+    renderFuzzyTray();
 }
 
 function applyFilters() {
     renderCalendar();
+    renderFuzzyTray();
 }
 
 // Sincronización con Steam
