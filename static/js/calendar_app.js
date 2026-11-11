@@ -162,7 +162,7 @@ function createGameCard(g) {
 
     card.innerHTML = `
         <div class="relative">
-            <img src="${g.header_image || g.capsule_image}" alt="${g.name}" class="w-full h-36 object-cover bg-[#0e141b]" onerror="this.src='https://via.placeholder.com/460x215/171a21/66c0f4?text=Steam+Game'">
+            <img src="${g.capsule_image || g.header_image}" alt="${g.name}" class="w-full h-36 object-cover bg-[#0e141b]" onerror="this.onerror=null; this.src='https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/${g.appid}/header.jpg';">
             
             <div class="absolute top-2 left-2 flex flex-col space-y-1">
                 ${wishlistBadge}
@@ -218,7 +218,7 @@ function renderFuzzyTray() {
 
         item.innerHTML = `
             <div class="flex items-start space-x-2.5">
-                <img src="${g.header_image || g.capsule_image}" class="w-14 h-9 object-cover rounded bg-black shrink-0">
+                <img src="${g.capsule_image || g.header_image}" class="w-14 h-9 object-cover rounded bg-black shrink-0" onerror="this.onerror=null; this.src='https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/${g.appid}/header.jpg';">
                 <div class="min-w-0 flex-grow">
                     <a href="${g.steam_store_url}" target="_blank" class="text-xs font-bold text-gray-200 hover:text-[#66c0f4] truncate block">
                         ${g.name}

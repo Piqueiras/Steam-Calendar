@@ -7,6 +7,27 @@ from app.date_parser import parse_steam_date
 
 logger = logging.getLogger(__name__)
 
+def _extract_asset_urls(it: Dict[str, Any], appid: int) -> tuple[str, str]:
+    """Construye las URLs CDN reales y autenticadas con hash de Steam para evitar errores 404."""
+    assets = it.get("assets", {})
+    fmt = assets.get("asset_url_format", "")
+    cdn_base = "https://shared.akamai.steamstatic.com/store_item_assets/"
+
+    header_file = assets.get("header") or assets.get("header_2x")
+    capsule_file = assets.get("main_capsule") or assets.get("main_capsule_2x") or assets.get("small_capsule")
+
+    if fmt and header_file:
+        header_url = cdn_base + fmt.replace("${FILENAME}", header_file)
+    else:
+        header_url = f"{cdn_base}steam/apps/{appid}/header.jpg"
+
+    if fmt and capsule_file:
+        capsule_url = cdn_base + fmt.replace("${FILENAME}", capsule_file)
+    else:
+        capsule_url = header_url
+
+    return header_url, capsule_url
+
 class SteamClient:
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key or get_active_steam_api_key()
@@ -78,6 +99,8 @@ class SteamClient:
                                 else:
                                     tags.append("Próximo Estreno")
 
+                                header_url, capsule_url = _extract_asset_urls(it, appid)
+
                                 games_dict[appid] = {
                                     "appid": appid,
                                     "name": name,
@@ -85,8 +108,8 @@ class SteamClient:
                                     "calendar_date": date_info["calendar_date"],
                                     "precision": date_info["precision"],
                                     "display_badge": date_info["display_badge"],
-                                    "header_image": f"https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/{appid}/header.jpg",
-                                    "capsule_image": f"https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/{appid}/capsule_616x353.jpg",
+                                    "header_image": header_url,
+                                    "capsule_image": capsule_url,
                                     "tags": tags,
                                     "price_str": "Por confirmar",
                                     "is_free": False,
@@ -200,6 +223,8 @@ class SteamClient:
                                 display_type=display_type
                             )
 
+                            header_url, capsule_url = _extract_asset_urls(it, appid)
+
                             detailed_games.append({
                                 "appid": appid,
                                 "name": it.get("name", f"App {appid}"),
@@ -207,8 +232,8 @@ class SteamClient:
                                 "calendar_date": date_info["calendar_date"],
                                 "precision": date_info["precision"],
                                 "display_badge": date_info["display_badge"],
-                                "header_image": f"https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/{appid}/header.jpg",
-                                "capsule_image": f"https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/{appid}/capsule_616x353.jpg",
+                                "header_image": header_url,
+                                "capsule_image": capsule_url,
                                 "tags": ["Wishlist"],
                                 "price_str": "En Deseados",
                                 "is_free": False,
