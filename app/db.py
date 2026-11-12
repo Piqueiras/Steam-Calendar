@@ -36,6 +36,7 @@ def init_db() -> None:
             review_score_label TEXT DEFAULT NULL,
             review_percent INTEGER DEFAULT NULL,
             review_count INTEGER DEFAULT NULL,
+            follower_count INTEGER DEFAULT 0,
             source TEXT DEFAULT 'POPULAR',
             updated_at INTEGER NOT NULL
         )
@@ -68,6 +69,10 @@ def init_db() -> None:
             pass
         try:
             cursor.execute("ALTER TABLE games ADD COLUMN review_count INTEGER DEFAULT NULL")
+        except Exception:
+            pass
+        try:
+            cursor.execute("ALTER TABLE games ADD COLUMN follower_count INTEGER DEFAULT 0")
         except Exception:
             pass
 
@@ -179,6 +184,7 @@ def init_db() -> None:
         # Índices para consultas rápidas
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_games_calendar_date ON games (calendar_date)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_games_precision ON games (precision)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_games_follower_count ON games (follower_count)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_wishlist_steam_id ON user_wishlist (steam_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_library_steam_id ON user_library (steam_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_steam_tags_name ON steam_tags (name)")
@@ -196,8 +202,8 @@ def save_game(game_data: Dict[str, Any]) -> None:
             appid, name, raw_date_str, calendar_date, precision, display_badge,
             header_image, capsule_image, tags, price_str, is_free, deck_status, item_type, parent_appid,
             release_category, is_early_access, review_score_label, review_percent, review_count,
-            source, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            follower_count, source, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(appid) DO UPDATE SET
             name=excluded.name,
             raw_date_str=excluded.raw_date_str,
@@ -217,6 +223,7 @@ def save_game(game_data: Dict[str, Any]) -> None:
             review_score_label=excluded.review_score_label,
             review_percent=excluded.review_percent,
             review_count=excluded.review_count,
+            follower_count=CASE WHEN excluded.follower_count > 0 THEN excluded.follower_count ELSE games.follower_count END,
             source=excluded.source,
             updated_at=excluded.updated_at
         """, (
@@ -239,6 +246,7 @@ def save_game(game_data: Dict[str, Any]) -> None:
             game_data.get("review_score_label"),
             game_data.get("review_percent"),
             game_data.get("review_count"),
+            game_data.get("follower_count", 0),
             game_data.get("source", "POPULAR"),
             int(time.time())
         ))
@@ -256,8 +264,8 @@ def save_games_batch(games_list: List[Dict[str, Any]]) -> None:
                 appid, name, raw_date_str, calendar_date, precision, display_badge,
                 header_image, capsule_image, tags, price_str, is_free, deck_status, item_type, parent_appid,
                 release_category, is_early_access, review_score_label, review_percent, review_count,
-                source, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                follower_count, source, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(appid) DO UPDATE SET
                 name=excluded.name,
                 raw_date_str=excluded.raw_date_str,
@@ -277,6 +285,7 @@ def save_games_batch(games_list: List[Dict[str, Any]]) -> None:
                 review_score_label=excluded.review_score_label,
                 review_percent=excluded.review_percent,
                 review_count=excluded.review_count,
+                follower_count=CASE WHEN excluded.follower_count > 0 THEN excluded.follower_count ELSE games.follower_count END,
                 source=excluded.source,
                 updated_at=excluded.updated_at
             """, (
@@ -299,6 +308,7 @@ def save_games_batch(games_list: List[Dict[str, Any]]) -> None:
                 g.get("review_score_label"),
                 g.get("review_percent"),
                 g.get("review_count"),
+                g.get("follower_count", 0),
                 g.get("source", "POPULAR"),
                 now
             ))
@@ -410,3 +420,15 @@ def get_steam_tags_map() -> Dict[int, str]:
         cursor = conn.cursor()
         cursor.execute("SELECT tagid, name FROM steam_tags")
         return {row["tagid"]: row["name"] for row in cursor.fetchall()}
+
+def update_game_followers_batch(updates: Dict[int, int]) -> None:
+    """Actualiza el número de seguidores de un conjunto de juegos."""
+    if not updates:
+        return
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.executemany(
+            "UPDATE games SET follower_count = ? WHERE appid = ?",
+            [(cnt, aid) for aid, cnt in updates.items()]
+        )
+        conn.commit()

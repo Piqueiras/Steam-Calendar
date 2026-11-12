@@ -116,7 +116,7 @@ def get_fuzzy_sort_key(game: Dict[str, Any]) -> tuple:
         sub_order = 0
 
     is_priority = not (game.get("is_wishlisted") or game.get("is_owned"))
-    return (year, q_bucket, sub_order, is_priority, game.get("name", ""))
+    return (year, q_bucket, sub_order, is_priority, -(game.get("follower_count") or 0), game.get("name", ""))
 
 class CalendarService:
     def __init__(self, api_key: Optional[str] = None):
@@ -217,6 +217,7 @@ class CalendarService:
             game_item["review_score_label"] = game_item.get("review_score_label")
             game_item["review_percent"] = game_item.get("review_percent")
             game_item["review_count"] = game_item.get("review_count")
+            game_item["follower_count"] = game_item.get("follower_count") or 0
             game_item["steam_store_url"] = f"https://store.steampowered.com/app/{appid}/"
 
             cal_date_str = game_item.get("calendar_date")
@@ -297,7 +298,7 @@ class CalendarService:
                 "formatted_date": f"{dt.day} {MONTH_NAMES_ES[dt.month - 1]} {dt.year}",
                 "is_today": dt == today,
                 "is_past": dt < today,
-                "games": sorted(days_map[d_str], key=lambda x: (not (x["is_wishlisted"] or x.get("is_owned")), x["name"]))
+                "games": sorted(days_map[d_str], key=lambda x: (not (x["is_wishlisted"] or x.get("is_owned")), -(x.get("follower_count") or 0), x["name"]))
             })
 
         # Ordenar fechas difusas en orden estrictamente cronológico:

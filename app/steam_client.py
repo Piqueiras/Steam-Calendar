@@ -289,6 +289,71 @@ def _extract_date_info(rel: Dict[str, Any]) -> Dict[str, Any]:
     else:
         return parse_steam_date(raw_date=custom_msg, timestamp=ts, display_type=display_type)
 
+def fetch_community_followers(appid: int, client: Optional[httpx.Client] = None) -> int:
+    """
+    Obtiene el número de seguidores oficiales de un juego en Steam Community.
+    Consulta el feed oficial XML del grupo comunitario del AppID con cabeceras de navegador.
+    """
+    url_xml = f"https://steamcommunity.com/games/{appid}/memberslistxml/?xml=1"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/xml,application/xml,application/xhtml+xml,text/html;q=0.9,*/*;q=0.8"
+    }
+    http_client = client or httpx.Client(timeout=8.0, headers=headers, follow_redirects=True)
+    close_after = client is None
+    try:
+        r = http_client.get(url_xml)
+        if r.status_code == 200:
+            import re
+            m = re.search(r"<memberCount>(\d+)</memberCount>", r.text)
+            if m:
+                return int(m.group(1))
+
+        # Fallback para juegos con GID personalizado
+        r_hub = http_client.get(f"https://steamcommunity.com/app/{appid}")
+        if r_hub.status_code == 200:
+            import re
+            m_gid = re.search(r'OpenGroupChat\(\s*[\'"](\d+)[\'"]', r_hub.text)
+            if m_gid:
+                gid = m_gid.group(1)
+                r_gid = http_client.get(f"https://steamcommunity.com/gid/{gid}/memberslistxml/?xml=1")
+                if r_gid.status_code == 200:
+                    m2 = re.search(r"<memberCount>(\d+)</memberCount>", r_gid.text)
+                    if m2:
+                        return int(m2.group(1))
+    except Exception as e:
+        logger.debug(f"Error obteniendo seguidores de {appid}: {e}")
+    finally:
+        if close_after:
+            http_client.close()
+    return 0
+
+def fetch_followers_batch(appids: List[int], max_workers: int = 5) -> Dict[int, int]:
+    """Obtiene el número de seguidores de múltiples AppIDs en paralelo respetando los límites de Steam."""
+    if not appids:
+        return {}
+    import concurrent.futures
+    import time
+    results: Dict[int, int] = {}
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/xml,application/xml,application/xhtml+xml,text/html;q=0.9,*/*;q=0.8"
+    }
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        with httpx.Client(timeout=8.0, headers=headers, follow_redirects=True) as client:
+            future_to_aid = {
+                executor.submit(fetch_community_followers, aid, client): aid
+                for aid in appids
+            }
+            for future in concurrent.futures.as_completed(future_to_aid):
+                aid = future_to_aid[future]
+                try:
+                    results[aid] = future.result()
+                except Exception:
+                    results[aid] = 0
+                time.sleep(0.02)
+    return results
+
 class SteamClient:
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key or get_active_steam_api_key()

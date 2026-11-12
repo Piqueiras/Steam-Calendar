@@ -275,6 +275,42 @@ def test_fuzzy_tray_placement_for_years_and_quarters():
     if idx_q4_2027 is not None and idx_year_2027 is not None:
         assert idx_q4_2027 < idx_year_2027, "Q4 2027 debe aparecer antes que los títulos sin trimestre fijado (Año 2027)"
 
+def test_sorting_by_followers_metric():
+    """Verifica que dentro del mismo día se ordenen primero los títulos con más seguidores (los más esperados)."""
+    from app.calendar_service import get_fuzzy_sort_key
+    # 1. Simulación de juegos en un mismo día
+    games_same_day = [
+        {"appid": 1, "name": "Game Alpha (Low followers)", "follower_count": 250, "is_wishlisted": False, "is_owned": False},
+        {"appid": 2, "name": "Game Beta (Huge Anticipation)", "follower_count": 150000, "is_wishlisted": False, "is_owned": False},
+        {"appid": 3, "name": "Game Gamma (Medium followers)", "follower_count": 12000, "is_wishlisted": False, "is_owned": False},
+        {"appid": 4, "name": "Game Personal (Wishlisted)", "follower_count": 50, "is_wishlisted": True, "is_owned": False},
+    ]
+
+    sorted_games = sorted(
+        games_same_day,
+        key=lambda x: (
+            not (x["is_wishlisted"] or x.get("is_owned")),
+            -(x.get("follower_count") or 0),
+            x["name"]
+        )
+    )
+
+    # El juego personal (wishlist) debe ir primero
+    assert sorted_games[0]["name"] == "Game Personal (Wishlisted)"
+    # Entre los no personales, el de 150k debe ir segundo, luego el de 12k, luego el de 250
+    assert sorted_games[1]["name"] == "Game Beta (Huge Anticipation)"
+    assert sorted_games[2]["name"] == "Game Gamma (Medium followers)"
+    assert sorted_games[3]["name"] == "Game Alpha (Low followers)"
+
+    # 2. En la bandeja difusa (fuzzy tray), dentro del mismo trimestre debe priorizar seguidores
+    g_quarter_low = {"name": "Q1 Low", "precision": "QUARTER", "display_badge": "Q1 2027", "follower_count": 100, "is_wishlisted": False}
+    g_quarter_high = {"name": "Q1 High", "precision": "QUARTER", "display_badge": "Q1 2027", "follower_count": 95000, "is_wishlisted": False}
+
+    key_low = get_fuzzy_sort_key(g_quarter_low)
+    key_high = get_fuzzy_sort_key(g_quarter_high)
+
+    assert key_high < key_low, "El título con 95k seguidores debe ordenarse antes que el de 100 seguidores"
+
 def test_no_hardcoded_games_in_app():
     import os
     import re

@@ -255,6 +255,19 @@ function createGameCard(g) {
         }
     }
 
+    let followersHtml = '';
+    if (g.follower_count && g.follower_count > 0) {
+        const formattedFollowers = g.follower_count >= 1000000 
+            ? (g.follower_count / 1000000).toFixed(1) + 'M' 
+            : (g.follower_count >= 1000 ? (g.follower_count / 1000).toFixed(1) + 'k' : g.follower_count);
+        followersHtml = `
+            <span class="inline-flex items-center gap-1 text-[10px] text-sky-300 font-medium bg-[#101b28] px-1.5 py-0.5 rounded border border-[#21384e]" title="${g.follower_count.toLocaleString()} seguidores en Steam Community">
+                <span>👥</span>
+                <span>${formattedFollowers} seg.</span>
+            </span>
+        `;
+    }
+
     card.innerHTML = `
         <div class="relative">
             <img src="${g.capsule_image || g.header_image}" alt="${g.name}" class="w-full h-36 object-cover bg-[#0e141b]" onerror="this.onerror=null; this.src='https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/${g.appid}/header.jpg';">
@@ -283,9 +296,12 @@ function createGameCard(g) {
             </div>
 
             <div class="pt-2 border-t border-[#233140] flex items-center justify-between">
-                <span class="text-xs font-semibold ${g.is_free ? 'text-green-400' : 'text-gray-300'}">
-                    ${g.price_str || 'Por confirmar'}
-                </span>
+                <div class="flex items-center space-x-2">
+                    <span class="text-xs font-semibold ${g.is_free ? 'text-green-400' : 'text-gray-300'}">
+                        ${g.price_str || 'Por confirmar'}
+                    </span>
+                    ${followersHtml}
+                </div>
                 
                 <a href="${g.steam_store_url}" target="_blank" class="bg-[#2a475e] hover:bg-[#386487] text-white text-[11px] font-semibold py-1 px-2.5 rounded transition-colors flex items-center space-x-1">
                     <span>Ver en Steam</span>
@@ -352,6 +368,14 @@ function renderFuzzyTray() {
             reviewPill = `<span class="text-[10px] ${revColor} font-bold" title="${g.review_score_label || ''} (${g.review_count} reseñas)">👍 ${pct}%</span>`;
         }
 
+        let fuzzyFollowersHtml = '';
+        if (g.follower_count && g.follower_count > 0) {
+            const formatted = g.follower_count >= 1000000 
+                ? (g.follower_count / 1000000).toFixed(1) + 'M' 
+                : (g.follower_count >= 1000 ? (g.follower_count / 1000).toFixed(1) + 'k' : g.follower_count);
+            fuzzyFollowersHtml = `<span class="text-[10px] text-sky-300 font-medium" title="${g.follower_count.toLocaleString()} seguidores">👥 ${formatted}</span>`;
+        }
+
         const fuzzyTagsHtml = (g.tags || []).filter(t => t && t !== 'Juego Oficial').slice(0, 3).map(t => 
             `<span class="bg-[#121a24] text-[#8fa0b5] text-[9px] px-1 py-0.2 rounded border border-[#233345]">${t}</span>`
         ).join(' ');
@@ -371,7 +395,10 @@ function renderFuzzyTray() {
                     ${fuzzyTagsHtml ? `<div class="flex flex-wrap gap-1 my-1">${fuzzyTagsHtml}</div>` : ''}
                     <div class="flex items-center justify-between mt-1 text-[11px]">
                         <span class="${badgeColor}">📅 ${g.display_badge}</span>
-                        ${reviewPill || (g.is_wishlisted ? '<span class="text-[10px] text-green-400 font-bold">★ Wishlist</span>' : (g.is_owned ? '<span class="text-[10px] text-blue-400 font-bold">📚 Biblioteca</span>' : ''))}
+                        <div class="flex items-center space-x-2">
+                            ${fuzzyFollowersHtml}
+                            ${reviewPill || (g.is_wishlisted ? '<span class="text-[10px] text-green-400 font-bold">★ Wishlist</span>' : (g.is_owned ? '<span class="text-[10px] text-blue-400 font-bold">📚 Biblioteca</span>' : ''))}
+                        </div>
                     </div>
                 </div>
             </div>
