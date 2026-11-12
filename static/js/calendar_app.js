@@ -166,8 +166,8 @@ function createGameCard(g) {
     const card = document.createElement('div');
     card.className = 'game-card rounded flex flex-col justify-between overflow-hidden relative';
 
-    const tagsHtml = (g.tags || []).slice(0, 3).map(t => 
-        `<span class="bg-[#0e141b] text-gray-400 text-[10px] px-1.5 py-0.5 rounded border border-[#233140]">${t}</span>`
+    const tagsHtml = (g.tags || []).filter(t => t && t !== 'Juego Oficial').slice(0, 4).map(t => 
+        `<span class="bg-[#121a24] text-[#8fa0b5] text-[10px] px-1.5 py-0.5 rounded border border-[#233345] hover:text-[#66c0f4] transition-colors">${t}</span>`
     ).join(' ');
 
     const wishlistBadge = g.is_wishlisted ? `
@@ -352,6 +352,10 @@ function renderFuzzyTray() {
             reviewPill = `<span class="text-[10px] ${revColor} font-bold" title="${g.review_score_label || ''} (${g.review_count} reseñas)">👍 ${pct}%</span>`;
         }
 
+        const fuzzyTagsHtml = (g.tags || []).filter(t => t && t !== 'Juego Oficial').slice(0, 3).map(t => 
+            `<span class="bg-[#121a24] text-[#8fa0b5] text-[9px] px-1 py-0.2 rounded border border-[#233345]">${t}</span>`
+        ).join(' ');
+
         item.innerHTML = `
             <div class="flex items-start space-x-2.5">
                 <img src="${g.capsule_image || g.header_image}" class="w-14 h-9 object-cover rounded bg-black shrink-0" onerror="this.onerror=null; this.src='https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/${g.appid}/header.jpg';">
@@ -364,6 +368,7 @@ function renderFuzzyTray() {
                     </div>
                     ${dlcBadge}
                     ${libraryBadge}
+                    ${fuzzyTagsHtml ? `<div class="flex flex-wrap gap-1 my-1">${fuzzyTagsHtml}</div>` : ''}
                     <div class="flex items-center justify-between mt-1 text-[11px]">
                         <span class="${badgeColor}">📅 ${g.display_badge}</span>
                         ${reviewPill || (g.is_wishlisted ? '<span class="text-[10px] text-green-400 font-bold">★ Wishlist</span>' : (g.is_owned ? '<span class="text-[10px] text-blue-400 font-bold">📚 Biblioteca</span>' : ''))}

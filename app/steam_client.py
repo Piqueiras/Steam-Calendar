@@ -137,36 +137,141 @@ def _detect_release_category(it: Dict[str, Any], is_dlc: bool) -> tuple[str, boo
     # o no tiene fecha de salida de EA anunciada: es su PRIMER LANZAMIENTO.
     return "FIRST_RELEASE", is_ea
 
-def _extract_tags(it: Dict[str, Any], is_dlc: bool, is_ea: bool, rel_cat: str = "") -> List[str]:
-    """Extrae las etiquetas y géneros reales devueltos por Steam."""
-    tags = []
-    if is_dlc:
-        tags.append("DLC / Expansión")
-    elif rel_cat == "RELEASE_1_0":
-        tags.append("Lanzamiento 1.0")
-    elif is_ea:
-        tags.append("Acceso anticipado")
+_TAG_MAP_CACHE: Dict[int, str] = {}
 
+def get_tag_name_map(client: Optional[httpx.Client] = None) -> Dict[int, str]:
+    """Obtiene el diccionario oficial de etiquetas de Steam en español (con caché en memoria y SQLite)."""
+    global _TAG_MAP_CACHE
+    if _TAG_MAP_CACHE:
+        return _TAG_MAP_CACHE
+
+    try:
+        from app.db import get_steam_tags_map, save_steam_tags
+        db_tags = get_steam_tags_map()
+        if db_tags and len(db_tags) > 50:
+            _TAG_MAP_CACHE = db_tags
+            return _TAG_MAP_CACHE
+    except Exception as e:
+        logger.debug(f"Error consultando steam_tags en SQLite: {e}")
+
+    # Consultar endpoint oficial de Steam para la lista de etiquetas
+    try:
+        http_client = client or httpx.Client(timeout=10.0)
+        close_client = client is None
+        try:
+            res = http_client.get("https://api.steampowered.com/IStoreService/GetTagList/v1/?language=spanish")
+            if res.status_code == 200:
+                data = res.json().get("response", {}).get("tags", [])
+                tag_map = {t["tagid"]: t["name"] for t in data if "tagid" in t and "name" in t}
+                if tag_map:
+                    _TAG_MAP_CACHE = tag_map
+                    try:
+                        save_steam_tags(tag_map)
+                    except Exception:
+                        pass
+                    return _TAG_MAP_CACHE
+        finally:
+            if close_client:
+                http_client.close()
+    except Exception as e:
+        logger.warning(f"No se pudo descargar la lista de tags desde IStoreService: {e}")
+
+    # Fallback a populartags
+    try:
+        http_client = client or httpx.Client(timeout=10.0)
+        close_client = client is None
+        try:
+            res = http_client.get("https://store.steampowered.com/tagdata/populartags/spanish")
+            if res.status_code == 200:
+                data = res.json()
+                tag_map = {t["tagid"]: t["name"] for t in data if "tagid" in t and "name" in t}
+                if tag_map:
+                    _TAG_MAP_CACHE = tag_map
+                    try:
+                        save_steam_tags(tag_map)
+                    except Exception:
+                        pass
+                    return _TAG_MAP_CACHE
+        finally:
+            if close_client:
+                http_client.close()
+    except Exception as e:
+        logger.warning(f"No se pudo descargar la lista de tags desde populartags: {e}")
+
+    return _TAG_MAP_CACHE
+
+def _extract_tags(
+    it: Dict[str, Any],
+    is_dlc: bool = False,
+    is_ea: bool = False,
+    rel_cat: str = "",
+    tag_map: Optional[Dict[int, str]] = None
+) -> List[str]:
+    """Extrae las principales etiquetas de la tienda de Steam en español (géneros y mecánicas)."""
+    if tag_map is None:
+        tag_map = get_tag_name_map()
+
+    tags: List[str] = []
+    seen: set = set()
+
+    def add_tag(name: Optional[str]) -> None:
+        if not name:
+            return
+        clean = name.strip()
+        lower = clean.lower()
+        if lower in ["acceso anticipado", "early access", "juego oficial", "official game"]:
+            return
+        if lower not in seen:
+            seen.add(lower)
+            tags.append(clean)
+
+    # 1. Tags directos de la API (con tagid y weight ordenados por relevancia comunitaria)
+    raw_tags = it.get("tags", [])
+    if isinstance(raw_tags, list):
+        for t in raw_tags:
+            if isinstance(t, dict):
+                tid = t.get("tagid") or t.get("id")
+                if tid and tag_map and tid in tag_map:
+                    add_tag(tag_map[tid])
+                elif t.get("name"):
+                    add_tag(t.get("name"))
+            elif isinstance(t, int) and tag_map and t in tag_map:
+                add_tag(tag_map[t])
+            elif isinstance(t, str):
+                if t.isdigit() and tag_map and int(t) in tag_map:
+                    add_tag(tag_map[int(t)])
+                else:
+                    add_tag(t)
+
+    # 2. Tagids array alternativo
+    tagids = it.get("tagids", [])
+    if isinstance(tagids, list) and tag_map:
+        for tid in tagids:
+            if isinstance(tid, int) and tid in tag_map:
+                add_tag(tag_map[tid])
+
+    # 3. Categorías y géneros devueltos
     categories = it.get("categories", {})
     if isinstance(categories, dict):
         genres = categories.get("genres", [])
         if isinstance(genres, list):
             for g in genres:
                 if isinstance(g, dict):
-                    gname = g.get("name")
-                    if gname and gname not in tags and gname.lower() not in ["early access", "acceso anticipado"]:
-                        tags.append(gname)
+                    add_tag(g.get("name"))
+                elif isinstance(g, str):
+                    add_tag(g)
 
-    tags_data = it.get("tags", [])
-    if isinstance(tags_data, list):
-        for t in tags_data:
-            if isinstance(t, dict):
-                tname = t.get("name")
-                if tname and tname not in tags and tname.lower() not in ["early access", "acceso anticipado"]:
-                    tags.append(tname)
+    # 4. Géneros estándar de la tienda (en appdetails o búsqueda)
+    genres_direct = it.get("genres", [])
+    if isinstance(genres_direct, list):
+        for g in genres_direct:
+            if isinstance(g, dict):
+                add_tag(g.get("description") or g.get("name"))
+            elif isinstance(g, str):
+                add_tag(g)
 
-    if not tags:
-        tags = ["DLC / Expansión"] if is_dlc else ["Juego Oficial"]
+    if not tags and is_dlc:
+        tags.append("DLC / Expansión")
 
     return tags[:5]
 
@@ -465,7 +570,7 @@ class SteamClient:
                             "display_badge": date_info["display_badge"],
                             "header_image": it.get("header_image") or f"https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/{appid}/header.jpg",
                             "capsule_image": it.get("large_capsule_image") or f"https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/{appid}/capsule_616x353.jpg",
-                            "tags": ["Destacado Steam"],
+                            "tags": _extract_tags(it, is_dlc=False, is_ea=False, rel_cat="FIRST_RELEASE") or ["Destacado"],
                             "price_str": price_str,
                             "is_free": price_val == 0,
                             "deck_status": "UNKNOWN",
@@ -777,6 +882,7 @@ class SteamClient:
                 "release_category": "RELEASE_1_0",
                 "is_early_access": True,
                 "leaving_early_access": True,
+                "tags": _extract_tags(item or {}, is_dlc, is_ea, "RELEASE_1_0"),
                 "detection_method": "VALVE_API_RELEASE_FROM_EARLY_ACCESS_DATE",
                 "steam_store_url": f"https://store.steampowered.com/app/{appid}/"
             }
@@ -805,6 +911,7 @@ class SteamClient:
                             "release_category": "RELEASE_1_0",
                             "is_early_access": True,
                             "leaving_early_access": True,
+                            "tags": _extract_tags(item or {}, is_dlc, is_ea, "RELEASE_1_0"),
                             "detection_method": "STEAM_STORE_PAGE_LEAVING_EARLY_ACCESS",
                             "steam_store_url": f"https://store.steampowered.com/app/{appid}/"
                         }
@@ -824,6 +931,7 @@ class SteamClient:
             "release_category": rel_cat,
             "is_early_access": is_ea,
             "leaving_early_access": False,
+            "tags": _extract_tags(item or {}, is_dlc, is_ea, rel_cat),
             "detection_method": "STEAM_STANDARD_RELEASE",
             "steam_store_url": f"https://store.steampowered.com/app/{appid}/"
         }

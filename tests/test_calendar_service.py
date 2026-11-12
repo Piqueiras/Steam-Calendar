@@ -1,6 +1,6 @@
 from app.calendar_service import CalendarService
 from app.db import init_db, save_game
-from app.steam_client import _detect_release_category, _extract_reviews
+from app.steam_client import _detect_release_category, _extract_reviews, _extract_tags
 
 def test_detect_release_category():
     # 1. Juego DLC
@@ -81,6 +81,46 @@ def test_extract_reviews():
     assert label is None
     assert pct is None
     assert count is None
+
+def test_extract_store_tags():
+    fake_tag_map = {
+        1695: "Mundo abierto",
+        1662: "Supervivencia",
+        122: "Rol",
+        19: "Acción",
+        493: "Acceso anticipado"
+    }
+
+    # 1. Objeto con tagids de Steam Store (traduce y preserva orden de relevancia comunitaria)
+    item_store = {
+        "tags": [
+            {"tagid": 1695, "weight": 1000},
+            {"tagid": 1662, "weight": 800},
+            {"tagid": 493, "weight": 500},
+            {"tagid": 122, "weight": 400}
+        ]
+    }
+    tags = _extract_tags(item_store, is_dlc=False, is_ea=True, tag_map=fake_tag_map)
+    assert tags == ["Mundo abierto", "Supervivencia", "Rol"]
+
+    # 2. Objeto con nombres directos en español
+    item_named = {
+        "tags": [
+            {"name": "Estrategia"},
+            {"name": "Roguelike"}
+        ]
+    }
+    tags_named = _extract_tags(item_named, tag_map=fake_tag_map)
+    assert tags_named == ["Estrategia", "Roguelike"]
+
+    # 3. DLC con tags propios
+    item_dlc = {
+        "tags": [
+            {"tagid": 19, "weight": 200}
+        ]
+    }
+    tags_dlc = _extract_tags(item_dlc, is_dlc=True, tag_map=fake_tag_map)
+    assert "Acción" in tags_dlc
 
 def test_calendar_service_timeline():
     init_db()

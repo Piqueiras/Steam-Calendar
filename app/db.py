@@ -167,12 +167,21 @@ def init_db() -> None:
             updated_at INTEGER NOT NULL
         )
         """)
+
+        # Tabla de diccionario oficial de etiquetas de Steam (TagID -> Nombre)
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS steam_tags (
+            tagid INTEGER PRIMARY KEY,
+            name TEXT NOT NULL
+        )
+        """)
         
         # Índices para consultas rápidas
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_games_calendar_date ON games (calendar_date)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_games_precision ON games (precision)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_wishlist_steam_id ON user_wishlist (steam_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_library_steam_id ON user_library (steam_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_steam_tags_name ON steam_tags (name)")
         
         conn.commit()
 
@@ -382,3 +391,22 @@ def get_setting(key: str, default: Optional[str] = None) -> Optional[str]:
         cursor.execute("SELECT value FROM app_settings WHERE key = ?", (key,))
         row = cursor.fetchone()
         return row["value"] if row else default
+
+def save_steam_tags(tags_map: Dict[int, str]) -> None:
+    """Guarda o actualiza el diccionario de etiquetas oficiales de Steam en español."""
+    if not tags_map:
+        return
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.executemany(
+            "INSERT OR REPLACE INTO steam_tags (tagid, name) VALUES (?, ?)",
+            list(tags_map.items())
+        )
+        conn.commit()
+
+def get_steam_tags_map() -> Dict[int, str]:
+    """Obtiene el mapeo completo de ID de tag a nombre en español."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT tagid, name FROM steam_tags")
+        return {row["tagid"]: row["name"] for row in cursor.fetchall()}
