@@ -139,7 +139,7 @@ function renderCalendar() {
                     ${filteredGames.length} ${filteredGames.length === 1 ? 'estreno' : 'estrenos'}
                 </span>
             </div>
-            <div class="p-3 grid grid-cols-1 md:grid-cols-2 gap-3" id="games-day-${day.date_iso}">
+            <div class="p-3.5 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4" id="games-day-${day.date_iso}">
             </div>
         `;
 
@@ -268,9 +268,25 @@ function createGameCard(g) {
         `;
     }
 
+    let priceHtml = '';
+    if (g.is_free) {
+        priceHtml = '<span class="text-xs font-semibold text-green-400">Gratis</span>';
+    } else if (g.discount_pct && g.discount_pct > 0) {
+        priceHtml = `
+            <div class="flex items-center gap-1.5">
+                <span class="bg-[#4c6b22] text-[#a4d007] text-[10px] font-bold px-1.5 py-0.5 rounded leading-none">-${g.discount_pct}%</span>
+                <span class="text-xs font-bold text-[#a4d007]">${g.price_str}</span>
+                ${g.original_price_str ? `<span class="text-[10px] text-gray-400 line-through">${g.original_price_str}</span>` : ''}
+            </div>
+        `;
+    } else {
+        const isUnconf = !g.price_str || g.price_str === 'Por confirmar' || g.price_str === 'Por anunciar';
+        priceHtml = `<span class="text-xs font-semibold ${isUnconf ? 'text-gray-400' : 'text-gray-200'}">${g.price_str || 'Por confirmar'}</span>`;
+    }
+
     card.innerHTML = `
         <div class="relative">
-            <img src="${g.capsule_image || g.header_image}" alt="${g.name}" class="w-full h-36 object-cover bg-[#0e141b]" onerror="this.onerror=null; this.src='https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/${g.appid}/header.jpg';">
+            <img src="${g.capsule_image || g.header_image}" alt="${g.name}" class="w-full h-48 object-cover bg-[#0e141b]" onerror="this.onerror=null; this.src='https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/${g.appid}/header.jpg';">
             
             <div class="absolute top-2 left-2 flex flex-col space-y-1">
                 ${wishlistBadge}
@@ -297,9 +313,7 @@ function createGameCard(g) {
 
             <div class="pt-2 border-t border-[#233140] flex items-center justify-between">
                 <div class="flex items-center space-x-2">
-                    <span class="text-xs font-semibold ${g.is_free ? 'text-green-400' : 'text-gray-300'}">
-                        ${g.price_str || 'Por confirmar'}
-                    </span>
+                    ${priceHtml}
                     ${followersHtml}
                 </div>
                 
@@ -348,24 +362,24 @@ function renderFuzzyTray() {
 
     filteredFuzzy.forEach(g => {
         const item = document.createElement('div');
-        item.className = 'bg-[#101822] p-2.5 rounded border border-[#233140] hover:border-[#66c0f4] transition-all';
+        item.className = 'bg-[#101822] p-3 rounded-lg border border-[#233140] hover:border-[#66c0f4] transition-all';
 
         const badgeColor = g.is_wishlisted ? 'text-green-400 font-bold' : (g.is_owned ? 'text-blue-400 font-bold' : 'text-yellow-400');
-        const dlcBadge = g.is_owned_base_game ? '<span class="text-[10px] text-sky-400 font-bold block">📦 DLC de biblioteca</span>' : '';
-        const libraryBadge = g.is_owned ? '<span class="text-[10px] text-blue-400 font-bold block">📚 En tu biblioteca</span>' : '';
+        const dlcBadge = g.is_owned_base_game ? '<span class="text-[10px] text-sky-400 font-bold block mb-0.5">📦 DLC de biblioteca</span>' : '';
+        const libraryBadge = g.is_owned ? '<span class="text-[10px] text-blue-400 font-bold block mb-0.5">📚 En tu biblioteca</span>' : '';
 
         let categoryPill = '';
         if (g.release_category === 'RELEASE_1_0') {
-            categoryPill = '<span class="text-[9px] bg-amber-500/20 text-amber-300 border border-amber-500/40 px-1 py-0.5 rounded font-semibold">🚀 1.0 EA</span>';
+            categoryPill = '<span class="text-[9px] bg-amber-500/20 text-amber-300 border border-amber-500/40 px-1 py-0.5 rounded font-semibold shrink-0">🚀 1.0 EA</span>';
         } else if (g.release_category === 'FIRST_RELEASE') {
-            categoryPill = '<span class="text-[9px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 px-1 py-0.5 rounded font-semibold">✨ Estreno</span>';
+            categoryPill = '<span class="text-[9px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 px-1 py-0.5 rounded font-semibold shrink-0">✨ Estreno</span>';
         }
 
         let reviewPill = '';
         if (g.review_count && g.review_count > 0) {
             const pct = g.review_percent;
-            const revColor = pct >= 70 ? 'text-[#66c0f4]' : (pct >= 40 ? 'text-yellow-400' : 'text-red-400');
-            reviewPill = `<span class="text-[10px] ${revColor} font-bold" title="${g.review_score_label || ''} (${g.review_count} reseñas)">👍 ${pct}%</span>`;
+            const revColor = pct >= 70 ? 'text-[#66c0f4] border-[#1f405c]' : (pct >= 40 ? 'text-yellow-400 border-[#4a4220]' : 'text-red-400 border-[#4a2020]');
+            reviewPill = `<span class="text-[10px] ${revColor} font-bold bg-[#101822] px-1.5 py-0.5 rounded border" title="${g.review_score_label || ''} (${g.review_count} reseñas)">👍 ${pct}%</span>`;
         }
 
         let fuzzyFollowersHtml = '';
@@ -373,19 +387,38 @@ function renderFuzzyTray() {
             const formatted = g.follower_count >= 1000000 
                 ? (g.follower_count / 1000000).toFixed(1) + 'M' 
                 : (g.follower_count >= 1000 ? (g.follower_count / 1000).toFixed(1) + 'k' : g.follower_count);
-            fuzzyFollowersHtml = `<span class="text-[10px] text-sky-300 font-medium" title="${g.follower_count.toLocaleString()} seguidores">👥 ${formatted}</span>`;
+            fuzzyFollowersHtml = `
+                <span class="inline-flex items-center gap-1 text-[10px] text-sky-300 font-medium bg-[#101b28] px-1.5 py-0.5 rounded border border-[#21384e]" title="${g.follower_count.toLocaleString()} seguidores">
+                    <span>👥</span>
+                    <span>${formatted}</span>
+                </span>
+            `;
+        }
+
+        let fuzzyPriceHtml = '';
+        if (g.is_free) {
+            fuzzyPriceHtml = '<span class="text-[10px] text-green-400 font-bold bg-[#14261d] px-1.5 py-0.5 rounded border border-[#234d35]">Gratis</span>';
+        } else if (g.discount_pct && g.discount_pct > 0) {
+            fuzzyPriceHtml = `
+                <span class="inline-flex items-center gap-1 bg-[#121c27] px-1.5 py-0.5 rounded border border-[#1e3447]">
+                    <span class="text-[9px] text-[#a4d007] font-bold">-${g.discount_pct}%</span>
+                    <span class="text-[10px] text-[#a4d007] font-bold">${g.price_str}</span>
+                </span>
+            `;
+        } else if (g.price_str && g.price_str !== 'Por confirmar' && g.price_str !== 'Por anunciar') {
+            fuzzyPriceHtml = `<span class="text-[10px] text-gray-200 font-semibold bg-[#121c27] px-1.5 py-0.5 rounded border border-[#1e3447]">${g.price_str}</span>`;
         }
 
         const fuzzyTagsHtml = (g.tags || []).filter(t => t && t !== 'Juego Oficial').slice(0, 3).map(t => 
-            `<span class="bg-[#121a24] text-[#8fa0b5] text-[9px] px-1 py-0.2 rounded border border-[#233345]">${t}</span>`
+            `<span class="bg-[#121a24] text-[#8fa0b5] text-[9px] px-1.5 py-0.5 rounded border border-[#233345]">${t}</span>`
         ).join(' ');
 
         item.innerHTML = `
-            <div class="flex items-start space-x-2.5">
-                <img src="${g.capsule_image || g.header_image}" class="w-14 h-9 object-cover rounded bg-black shrink-0" onerror="this.onerror=null; this.src='https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/${g.appid}/header.jpg';">
+            <div class="flex items-start space-x-3">
+                <img src="${g.capsule_image || g.header_image}" class="w-20 h-12 object-cover rounded bg-black shrink-0 shadow-sm" onerror="this.onerror=null; this.src='https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/${g.appid}/header.jpg';">
                 <div class="min-w-0 flex-grow">
-                    <div class="flex items-center justify-between gap-1 mb-0.5">
-                        <a href="${g.steam_store_url}" target="_blank" class="text-xs font-bold text-gray-200 hover:text-[#66c0f4] truncate block">
+                    <div class="flex items-center justify-between gap-1.5 mb-1">
+                        <a href="${g.steam_store_url}" target="_blank" class="text-xs font-bold text-gray-200 hover:text-[#66c0f4] truncate block" title="${g.name}">
                             ${g.name}
                         </a>
                         ${categoryPill}
@@ -393,13 +426,19 @@ function renderFuzzyTray() {
                     ${dlcBadge}
                     ${libraryBadge}
                     ${fuzzyTagsHtml ? `<div class="flex flex-wrap gap-1 my-1">${fuzzyTagsHtml}</div>` : ''}
-                    <div class="flex items-center justify-between mt-1 text-[11px]">
-                        <span class="${badgeColor}">📅 ${g.display_badge}</span>
-                        <div class="flex items-center space-x-2">
-                            ${fuzzyFollowersHtml}
-                            ${reviewPill || (g.is_wishlisted ? '<span class="text-[10px] text-green-400 font-bold">★ Wishlist</span>' : (g.is_owned ? '<span class="text-[10px] text-blue-400 font-bold">📚 Biblioteca</span>' : ''))}
-                        </div>
-                    </div>
+                </div>
+            </div>
+
+            <div class="flex flex-wrap items-center justify-between gap-2 mt-2 pt-2 border-t border-[#1e2a38] text-[11px]">
+                <span class="${badgeColor} font-semibold flex items-center gap-1">
+                    <span>📅</span>
+                    <span>${g.display_badge}</span>
+                </span>
+                <div class="flex flex-wrap items-center gap-1.5">
+                    ${fuzzyPriceHtml}
+                    ${fuzzyFollowersHtml}
+                    ${reviewPill}
+                    ${g.is_wishlisted ? '<span class="text-[10px] text-green-400 font-bold bg-[#14261d] px-1.5 py-0.5 rounded border border-[#234d35]">★ Wishlist</span>' : (g.is_owned ? '<span class="text-[10px] text-blue-400 font-bold bg-[#132233] px-1.5 py-0.5 rounded border border-[#1f3b5c]">📚 Biblioteca</span>' : '')}
                 </div>
             </div>
         `;

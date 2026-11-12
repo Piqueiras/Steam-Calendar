@@ -311,6 +311,60 @@ def test_sorting_by_followers_metric():
 
     assert key_high < key_low, "El título con 95k seguidores debe ordenarse antes que el de 100 seguidores"
 
+def test_extract_price():
+    """Verifica la extracción precisa de precios, descuentos y gratuidad desde respuestas de Valve."""
+    from app.steam_client import _extract_price
+
+    # 1. Juego con descuento activo de Valve (best_purchase_option)
+    item_discounted = {
+        "best_purchase_option": {
+            "final_price_in_cents": "1499",
+            "original_price_in_cents": "2999",
+            "formatted_final_price": "14,99€",
+            "formatted_original_price": "29,99€",
+            "discount_pct": 50
+        }
+    }
+    price, is_free, disc, orig = _extract_price(item_discounted)
+    assert price == "14,99€"
+    assert is_free is False
+    assert disc == 50
+    assert orig == "29,99€"
+
+    # 2. Juego a precio completo sin descuento
+    item_full_price = {
+        "best_purchase_option": {
+            "final_price_in_cents": "5999",
+            "formatted_final_price": "59,99€",
+            "discount_pct": 0
+        }
+    }
+    price, is_free, disc, orig = _extract_price(item_full_price)
+    assert price == "59,99€"
+    assert is_free is False
+    assert disc == 0
+    assert orig is None
+
+    # 3. Juego Free to Play por tag 113
+    item_ftp = {
+        "best_purchase_option": None,
+        "tagids": [113, 20]
+    }
+    price, is_free, disc, orig = _extract_price(item_ftp)
+    assert price == "Gratis"
+    assert is_free is True
+    assert disc == 0
+
+    # 4. Próximo estreno indie sin precio fijado (sin preventa)
+    item_unpriced = {
+        "best_purchase_option": None,
+        "tagids": [19, 492]
+    }
+    price, is_free, disc, orig = _extract_price(item_unpriced)
+    assert price == "Por confirmar"
+    assert is_free is False
+    assert disc == 0
+
 def test_no_hardcoded_games_in_app():
     import os
     import re

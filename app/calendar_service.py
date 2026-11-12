@@ -218,6 +218,10 @@ class CalendarService:
             game_item["review_percent"] = game_item.get("review_percent")
             game_item["review_count"] = game_item.get("review_count")
             game_item["follower_count"] = game_item.get("follower_count") or 0
+            game_item["price_str"] = game_item.get("price_str") or "Por confirmar"
+            game_item["is_free"] = bool(game_item.get("is_free"))
+            game_item["discount_pct"] = game_item.get("discount_pct") or 0
+            game_item["original_price_str"] = game_item.get("original_price_str")
             game_item["steam_store_url"] = f"https://store.steampowered.com/app/{appid}/"
 
             cal_date_str = game_item.get("calendar_date")

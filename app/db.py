@@ -28,6 +28,8 @@ def init_db() -> None:
             tags TEXT,
             price_str TEXT,
             is_free INTEGER DEFAULT 0,
+            discount_pct INTEGER DEFAULT 0,
+            original_price_str TEXT DEFAULT NULL,
             deck_status TEXT DEFAULT 'UNKNOWN',
             item_type TEXT DEFAULT 'GAME',
             parent_appid INTEGER DEFAULT NULL,
@@ -73,6 +75,14 @@ def init_db() -> None:
             pass
         try:
             cursor.execute("ALTER TABLE games ADD COLUMN follower_count INTEGER DEFAULT 0")
+        except Exception:
+            pass
+        try:
+            cursor.execute("ALTER TABLE games ADD COLUMN discount_pct INTEGER DEFAULT 0")
+        except Exception:
+            pass
+        try:
+            cursor.execute("ALTER TABLE games ADD COLUMN original_price_str TEXT DEFAULT NULL")
         except Exception:
             pass
 
@@ -200,10 +210,10 @@ def save_game(game_data: Dict[str, Any]) -> None:
         cursor.execute("""
         INSERT INTO games (
             appid, name, raw_date_str, calendar_date, precision, display_badge,
-            header_image, capsule_image, tags, price_str, is_free, deck_status, item_type, parent_appid,
-            release_category, is_early_access, review_score_label, review_percent, review_count,
-            follower_count, source, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            header_image, capsule_image, tags, price_str, is_free, discount_pct, original_price_str,
+            deck_status, item_type, parent_appid, release_category, is_early_access,
+            review_score_label, review_percent, review_count, follower_count, source, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(appid) DO UPDATE SET
             name=excluded.name,
             raw_date_str=excluded.raw_date_str,
@@ -215,6 +225,8 @@ def save_game(game_data: Dict[str, Any]) -> None:
             tags=excluded.tags,
             price_str=excluded.price_str,
             is_free=excluded.is_free,
+            discount_pct=excluded.discount_pct,
+            original_price_str=excluded.original_price_str,
             deck_status=excluded.deck_status,
             item_type=excluded.item_type,
             parent_appid=excluded.parent_appid,
@@ -238,6 +250,8 @@ def save_game(game_data: Dict[str, Any]) -> None:
             tags_json,
             game_data.get("price_str", ""),
             1 if game_data.get("is_free") else 0,
+            game_data.get("discount_pct", 0),
+            game_data.get("original_price_str"),
             game_data.get("deck_status", "UNKNOWN"),
             game_data.get("item_type", "GAME"),
             game_data.get("parent_appid"),
@@ -262,10 +276,10 @@ def save_games_batch(games_list: List[Dict[str, Any]]) -> None:
             cursor.execute("""
             INSERT INTO games (
                 appid, name, raw_date_str, calendar_date, precision, display_badge,
-                header_image, capsule_image, tags, price_str, is_free, deck_status, item_type, parent_appid,
-                release_category, is_early_access, review_score_label, review_percent, review_count,
-                follower_count, source, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                header_image, capsule_image, tags, price_str, is_free, discount_pct, original_price_str,
+                deck_status, item_type, parent_appid, release_category, is_early_access,
+                review_score_label, review_percent, review_count, follower_count, source, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(appid) DO UPDATE SET
                 name=excluded.name,
                 raw_date_str=excluded.raw_date_str,
@@ -277,6 +291,8 @@ def save_games_batch(games_list: List[Dict[str, Any]]) -> None:
                 tags=excluded.tags,
                 price_str=excluded.price_str,
                 is_free=excluded.is_free,
+                discount_pct=excluded.discount_pct,
+                original_price_str=excluded.original_price_str,
                 deck_status=excluded.deck_status,
                 item_type=excluded.item_type,
                 parent_appid=excluded.parent_appid,
@@ -300,6 +316,8 @@ def save_games_batch(games_list: List[Dict[str, Any]]) -> None:
                 tags_json,
                 g.get("price_str", ""),
                 1 if g.get("is_free") else 0,
+                g.get("discount_pct", 0),
+                g.get("original_price_str"),
                 g.get("deck_status", "UNKNOWN"),
                 g.get("item_type", "GAME"),
                 g.get("parent_appid"),
@@ -311,6 +329,26 @@ def save_games_batch(games_list: List[Dict[str, Any]]) -> None:
                 g.get("follower_count", 0),
                 g.get("source", "POPULAR"),
                 now
+            ))
+        conn.commit()
+
+def update_game_prices_batch(price_items: List[Dict[str, Any]]) -> None:
+    """Actualiza en bloque los precios, gratuidad y descuentos de una lista de juegos."""
+    now = int(time.time())
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        for p in price_items:
+            cursor.execute("""
+                UPDATE games 
+                SET price_str = ?, is_free = ?, discount_pct = ?, original_price_str = ?, updated_at = ?
+                WHERE appid = ?
+            """, (
+                p["price_str"],
+                1 if p.get("is_free") else 0,
+                p.get("discount_pct", 0),
+                p.get("original_price_str"),
+                now,
+                p["appid"]
             ))
         conn.commit()
 

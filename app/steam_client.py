@@ -289,6 +289,79 @@ def _extract_date_info(rel: Dict[str, Any]) -> Dict[str, Any]:
     else:
         return parse_steam_date(raw_date=custom_msg, timestamp=ts, display_type=display_type)
 
+def _extract_price(it: Dict[str, Any]) -> tuple[str, bool, int, Optional[str]]:
+    """
+    Extrae la información de precio oficial de Steam a partir del StoreItem o appdetails:
+    Devuelve (price_str, is_free, discount_pct, original_price_str).
+    """
+    if not isinstance(it, dict):
+        return ("Por confirmar", False, 0, None)
+
+    # 1. Opción preferida de Valve: best_purchase_option en IStoreBrowseService y IStoreQueryService
+    bpo = it.get("best_purchase_option")
+    if isinstance(bpo, dict):
+        final_price_str = bpo.get("formatted_final_price")
+        orig_price_str = bpo.get("formatted_original_price")
+        final_cents_raw = bpo.get("final_price_in_cents")
+        discount_pct = int(bpo.get("discount_pct") or 0)
+        
+        final_cents = None
+        if final_cents_raw is not None:
+            try:
+                final_cents = int(final_cents_raw)
+            except (ValueError, TypeError):
+                pass
+
+        if final_cents == 0:
+            return ("Gratis", True, 0, None)
+        if final_price_str:
+            return (final_price_str, False, discount_pct, (orig_price_str if discount_pct > 0 else None))
+        if final_cents and final_cents > 0:
+            formatted = f"{final_cents / 100:.2f}€".replace(".", ",")
+            return (formatted, False, discount_pct, (orig_price_str if discount_pct > 0 else None))
+
+    # 2. Detección de juegos Free to Play / Gratuitos
+    tagids = it.get("tagids", [])
+    tags_raw = it.get("tags", [])
+    tag_ids_all = set(tagids if isinstance(tagids, list) else [])
+    if isinstance(tags_raw, list):
+        tag_ids_all.update([t.get("tagid") for t in tags_raw if isinstance(t, dict) and t.get("tagid")])
+
+    cats = it.get("categories", {})
+    genres = cats.get("genres", []) if isinstance(cats, dict) else it.get("genres", [])
+    is_ftp_cat = any("free to play" in str(g).lower() or "gratis" in str(g).lower() for g in genres)
+
+    if 113 in tag_ids_all or is_ftp_cat or it.get("is_free") is True:
+        return ("Gratis", True, 0, None)
+
+    # 3. Respaldo para appdetails o featured categories (price_overview)
+    po = it.get("price_overview")
+    if isinstance(po, dict):
+        final_formatted = po.get("final_formatted")
+        initial_formatted = po.get("initial_formatted")
+        discount = int(po.get("discount_percent") or 0)
+        final_cents = po.get("final", 0)
+        is_free = po.get("is_free", False) or final_cents == 0
+        if is_free:
+            return ("Gratis", True, 0, None)
+        if final_formatted:
+            return (final_formatted, False, discount, (initial_formatted if discount > 0 else None))
+        if final_cents > 0:
+            return (f"{final_cents / 100:.2f}€".replace(".", ","), False, discount, None)
+
+    # 4. Respaldo para final_price directo (store search o featured)
+    final_price = it.get("final_price")
+    if final_price is not None:
+        if final_price == 0:
+            return ("Gratis", True, 0, None)
+        orig = it.get("original_price")
+        disc = int(it.get("discount_percent") or 0)
+        price_str = f"{final_price / 100:.2f}€".replace(".", ",")
+        orig_str = f"{orig / 100:.2f}€".replace(".", ",") if (orig and disc > 0) else None
+        return (price_str, False, disc, orig_str)
+
+    return ("Por confirmar", False, 0, None)
+
 def fetch_community_followers(appid: int, client: Optional[httpx.Client] = None) -> int:
     """
     Obtiene el número de seguidores oficiales de un juego en Steam Community.
@@ -424,6 +497,7 @@ class SteamClient:
                                 rel_cat, is_ea = _detect_release_category(it, is_dlc)
                                 rev_label, rev_pct, rev_cnt = _extract_reviews(it)
                                 tags = _extract_tags(it, is_dlc, is_ea, rel_cat)
+                                price_str, is_free, disc_pct, orig_price = _extract_price(it)
 
                                 header_url, capsule_url = _extract_asset_urls(it, appid)
 
@@ -437,8 +511,10 @@ class SteamClient:
                                     "header_image": header_url,
                                     "capsule_image": capsule_url,
                                     "tags": tags,
-                                    "price_str": "Por confirmar",
-                                    "is_free": False,
+                                    "price_str": price_str,
+                                    "is_free": is_free,
+                                    "discount_pct": disc_pct,
+                                    "original_price_str": orig_price,
                                     "deck_status": "UNKNOWN",
                                     "item_type": item_type,
                                     "parent_appid": parent_appid,
@@ -505,6 +581,10 @@ class SteamClient:
                             rel_cat, is_ea = _detect_release_category(it, is_dlc)
                             rev_label, rev_pct, rev_cnt = _extract_reviews(it)
                             tags = _extract_tags(it, is_dlc, is_ea, rel_cat)
+                            price_str, is_free, disc_pct, orig_price = _extract_price(it)
+                            if price_str == "Por confirmar":
+                                price_str = "Ya disponible"
+
                             header_url, capsule_url = _extract_asset_urls(it, appid)
 
                             recent_dict[appid] = {
@@ -517,8 +597,10 @@ class SteamClient:
                                 "header_image": header_url,
                                 "capsule_image": capsule_url,
                                 "tags": tags,
-                                "price_str": "Ya disponible",
-                                "is_free": False,
+                                "price_str": price_str,
+                                "is_free": is_free,
+                                "discount_pct": disc_pct,
+                                "original_price_str": orig_price,
                                 "deck_status": "UNKNOWN",
                                 "item_type": item_type,
                                 "parent_appid": parent_appid,
@@ -582,6 +664,7 @@ class SteamClient:
                                 rel_cat, is_ea = _detect_release_category(it, is_dlc)
                                 rev_label, rev_pct, rev_cnt = _extract_reviews(it)
                                 tags = _extract_tags(it, is_dlc, is_ea, rel_cat)
+                                price_str, is_free, disc_pct, orig_price = _extract_price(it)
                                 header_url, capsule_url = _extract_asset_urls(it, appid)
 
                                 upcoming_dict[appid] = {
@@ -594,8 +677,10 @@ class SteamClient:
                                     "header_image": header_url,
                                     "capsule_image": capsule_url,
                                     "tags": tags,
-                                    "price_str": "Por confirmar",
-                                    "is_free": False,
+                                    "price_str": price_str,
+                                    "is_free": is_free,
+                                    "discount_pct": disc_pct,
+                                    "original_price_str": orig_price,
                                     "deck_status": "UNKNOWN",
                                     "item_type": item_type,
                                     "parent_appid": parent_appid,
@@ -623,8 +708,7 @@ class SteamClient:
                         name = it.get("name", f"App {appid}")
                         date_info = parse_steam_date(it.get("status") or "Próximamente")
                         
-                        price_val = it.get("final_price", 0)
-                        price_str = f"{price_val / 100:.2f}€" if price_val > 0 else "Por anunciar"
+                        price_str, is_free, disc_pct, orig_price = _extract_price(it)
 
                         upcoming_dict[appid] = {
                             "appid": appid,
@@ -637,7 +721,9 @@ class SteamClient:
                             "capsule_image": it.get("large_capsule_image") or f"https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/{appid}/capsule_616x353.jpg",
                             "tags": _extract_tags(it, is_dlc=False, is_ea=False, rel_cat="FIRST_RELEASE") or ["Destacado"],
                             "price_str": price_str,
-                            "is_free": price_val == 0,
+                            "is_free": is_free,
+                            "discount_pct": disc_pct,
+                            "original_price_str": orig_price,
                             "deck_status": "UNKNOWN",
                             "item_type": "GAME",
                             "parent_appid": None,
@@ -722,6 +808,7 @@ class SteamClient:
                             rel_cat, is_ea = _detect_release_category(it, is_dlc)
                             rev_label, rev_pct, rev_cnt = _extract_reviews(it)
                             tags = _extract_tags(it, is_dlc, is_ea, rel_cat)
+                            price_str, is_free, disc_pct, orig_price = _extract_price(it)
 
                             detailed_games.append({
                                 "appid": appid,
@@ -733,8 +820,10 @@ class SteamClient:
                                 "header_image": header_url,
                                 "capsule_image": capsule_url,
                                 "tags": tags,
-                                "price_str": "Por confirmar",
-                                "is_free": False,
+                                "price_str": price_str,
+                                "is_free": is_free,
+                                "discount_pct": disc_pct,
+                                "original_price_str": orig_price,
                                 "deck_status": "UNKNOWN",
                                 "item_type": item_type,
                                 "parent_appid": parent_appid,
@@ -933,6 +1022,7 @@ class SteamClient:
         rel_items = item.get("related_items", {}) if item else {}
         parent_appid = rel_items.get("parent_appid")
         is_dlc = type_id in [1, 4] or bool(parent_appid)
+        price_str, is_free, disc_pct, orig_price = _extract_price(item or {})
 
         # 1. ¿Tiene fecha oficial de salida de Early Access en la API de Valve?
         if ea_10_ts:
@@ -948,6 +1038,10 @@ class SteamClient:
                 "is_early_access": True,
                 "leaving_early_access": True,
                 "tags": _extract_tags(item or {}, is_dlc, is_ea, "RELEASE_1_0"),
+                "price_str": price_str,
+                "is_free": is_free,
+                "discount_pct": disc_pct,
+                "original_price_str": orig_price,
                 "detection_method": "VALVE_API_RELEASE_FROM_EARLY_ACCESS_DATE",
                 "steam_store_url": f"https://store.steampowered.com/app/{appid}/"
             }
@@ -977,6 +1071,10 @@ class SteamClient:
                             "is_early_access": True,
                             "leaving_early_access": True,
                             "tags": _extract_tags(item or {}, is_dlc, is_ea, "RELEASE_1_0"),
+                            "price_str": price_str,
+                            "is_free": is_free,
+                            "discount_pct": disc_pct,
+                            "original_price_str": orig_price,
                             "detection_method": "STEAM_STORE_PAGE_LEAVING_EARLY_ACCESS",
                             "steam_store_url": f"https://store.steampowered.com/app/{appid}/"
                         }
@@ -997,6 +1095,10 @@ class SteamClient:
             "is_early_access": is_ea,
             "leaving_early_access": False,
             "tags": _extract_tags(item or {}, is_dlc, is_ea, rel_cat),
+            "price_str": price_str,
+            "is_free": is_free,
+            "discount_pct": disc_pct,
+            "original_price_str": orig_price,
             "detection_method": "STEAM_STANDARD_RELEASE",
             "steam_store_url": f"https://store.steampowered.com/app/{appid}/"
         }
