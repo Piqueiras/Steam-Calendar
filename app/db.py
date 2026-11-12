@@ -76,6 +76,66 @@ def init_db() -> None:
             cursor.execute("UPDATE games SET release_category = 'DLC' WHERE item_type = 'DLC' OR parent_appid IS NOT NULL")
         except Exception:
             pass
+
+        # Normalización de fechas difusas y placeholders de Valve (1 de enero para AÑO y 1 de dic para Q4)
+        try:
+            cursor.execute("""
+                UPDATE games 
+                SET calendar_date = NULL, 
+                    precision = 'YEAR', 
+                    display_badge = 'Año ' || substr(calendar_date, 1, 4),
+                    raw_date_str = CASE 
+                        WHEN raw_date_str = calendar_date OR raw_date_str IS NULL OR raw_date_str = '' 
+                        THEN substr(calendar_date, 1, 4) 
+                        ELSE raw_date_str 
+                    END
+                WHERE calendar_date LIKE '%-01-01' 
+                  AND CAST(substr(calendar_date, 1, 4) AS INTEGER) >= 2026
+                  AND (raw_date_str NOT LIKE '%1 de %' AND raw_date_str NOT LIKE '%01 de %' AND raw_date_str NOT LIKE '%jan 1%')
+            """)
+            cursor.execute("""
+                UPDATE games 
+                SET calendar_date = NULL, 
+                    precision = 'QUARTER', 
+                    display_badge = 'Q4 ' || substr(calendar_date, 1, 4),
+                    raw_date_str = CASE 
+                        WHEN raw_date_str = calendar_date OR raw_date_str IS NULL OR raw_date_str = '' 
+                        THEN 'Q4 ' || substr(calendar_date, 1, 4) 
+                        ELSE raw_date_str 
+                    END
+                WHERE calendar_date LIKE '%-12-01' 
+                  AND CAST(substr(calendar_date, 1, 4) AS INTEGER) >= 2026
+                  AND (raw_date_str NOT LIKE '%1 de %' AND raw_date_str NOT LIKE '%01 de %' AND raw_date_str NOT LIKE '%dec 1%' AND raw_date_str NOT LIKE '%dic 1%')
+            """)
+            cursor.execute("""
+                UPDATE games 
+                SET calendar_date = NULL, 
+                    precision = 'QUARTER', 
+                    display_badge = 'Q1 ' || substr(calendar_date, 1, 4)
+                WHERE calendar_date LIKE '%-03-01' 
+                  AND CAST(substr(calendar_date, 1, 4) AS INTEGER) >= 2026
+                  AND (raw_date_str = calendar_date OR raw_date_str LIKE '%trimestre%' OR raw_date_str LIKE '%q1%')
+            """)
+            cursor.execute("""
+                UPDATE games 
+                SET calendar_date = NULL, 
+                    precision = 'QUARTER', 
+                    display_badge = 'Q2 ' || substr(calendar_date, 1, 4)
+                WHERE calendar_date LIKE '%-06-01' 
+                  AND CAST(substr(calendar_date, 1, 4) AS INTEGER) >= 2026
+                  AND (raw_date_str = calendar_date OR raw_date_str LIKE '%trimestre%' OR raw_date_str LIKE '%q2%')
+            """)
+            cursor.execute("""
+                UPDATE games 
+                SET calendar_date = NULL, 
+                    precision = 'QUARTER', 
+                    display_badge = 'Q3 ' || substr(calendar_date, 1, 4)
+                WHERE calendar_date LIKE '%-09-01' 
+                  AND CAST(substr(calendar_date, 1, 4) AS INTEGER) >= 2026
+                  AND (raw_date_str = calendar_date OR raw_date_str LIKE '%trimestre%' OR raw_date_str LIKE '%q3%')
+            """)
+        except Exception:
+            pass
         
         # Tabla de lista de deseados de usuarios
         cursor.execute("""

@@ -1,5 +1,6 @@
 import datetime
 import json
+import re
 from typing import List, Dict, Any, Optional
 from icalendar import Calendar, Event, vDate
 from app.db import (
@@ -11,6 +12,7 @@ from app.db import (
     clear_all_games
 )
 from app.steam_client import SteamClient
+from app.date_parser import MONTH_MAP
 
 DAY_NAMES_ES = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
 MONTH_NAMES_ES = [
@@ -31,6 +33,90 @@ def format_day_header(dt: datetime.date, today: datetime.date) -> str:
     day_name = DAY_NAMES_ES[dt.weekday()]
     month_name = MONTH_NAMES_ES[dt.month - 1]
     return f"{day_name}, {dt.day} de {month_name}"
+
+def get_fuzzy_end_date(game: Dict[str, Any]) -> Optional[datetime.date]:
+    """Calcula la fecha de finalización del periodo difuso para descartar ventanas que ya expiraron."""
+    badge = str(game.get("display_badge", ""))
+    raw = str(game.get("raw_date_str", ""))
+    prec = game.get("precision", "TBA")
+    combined = f"{badge} {raw}".lower()
+
+    if prec == "QUARTER":
+        m = re.search(r"\bq([1-4])\s*(\d{4})\b", combined) or re.search(r"\b([1-4])\.?[ºer]*\s*trimestre\s*(?:del?|de)?\s*(\d{4})\b", combined)
+        if m:
+            q = int(m.group(1))
+            year = int(m.group(2))
+            month_end = q * 3
+            day_end = 30 if month_end in [6, 9] else 31
+            return datetime.date(year, month_end, day_end)
+
+    elif prec == "MONTH":
+        m_year = re.search(r"\b(202[4-9]|203[0-9])\b", combined)
+        if m_year:
+            year = int(m_year.group(1))
+            for m_name, m_num in MONTH_MAP.items():
+                if m_name in combined:
+                    day_end = 30 if m_num in [4, 6, 9, 11] else (28 if m_num == 2 else 31)
+                    return datetime.date(year, m_num, day_end)
+
+    elif prec == "YEAR":
+        m_year = re.search(r"\b(202[4-9]|203[0-9])\b", combined)
+        if m_year:
+            year = int(m_year.group(1))
+            return datetime.date(year, 12, 31)
+
+    return None
+
+def get_fuzzy_sort_key(game: Dict[str, Any]) -> tuple:
+    """
+    Genera una clave de ordenación estrictamente cronológica para la barra lateral:
+    1. Año (2026, 2027, 2028..., 9999 para TBA)
+    2. Bloque de periodo dentro del año (Q1=1, Q2=2, Q3=3, Q4=4, Año completo=5, TBA=99)
+    3. Sub-orden dentro del bloque (para meses dentro del trimestre)
+    4. Prioridad personal (Deseados o en biblioteca primero)
+    5. Nombre alfabético
+    """
+    badge = str(game.get("display_badge", ""))
+    raw = str(game.get("raw_date_str", ""))
+    prec = game.get("precision", "TBA")
+    combined = f"{badge} {raw}".lower()
+
+    year = 9999
+    q_bucket = 99
+    sub_order = 0
+
+    m_year = re.search(r"\b(202[4-9]|203[0-9])\b", combined)
+    if m_year:
+        year = int(m_year.group(1))
+
+    if prec == "QUARTER":
+        m_q = re.search(r"\bq([1-4])\b", combined) or re.search(r"\b([1-4])\.?[ºer]*\s*trimestre\b", combined)
+        if m_q:
+            q_bucket = int(m_q.group(1))
+            sub_order = 0
+        else:
+            q_bucket = 1
+    elif prec == "MONTH":
+        found_m = 0
+        for m_name, m_num in MONTH_MAP.items():
+            if m_name in combined:
+                found_m = m_num
+                break
+        if found_m > 0:
+            q_bucket = ((found_m - 1) // 3) + 1
+            sub_order = ((found_m - 1) % 3) + 1
+        else:
+            q_bucket = 1
+    elif prec == "YEAR":
+        q_bucket = 5
+        sub_order = 0
+    else:  # TBA
+        year = 9999
+        q_bucket = 99
+        sub_order = 0
+
+    is_priority = not (game.get("is_wishlisted") or game.get("is_owned"))
+    return (year, q_bucket, sub_order, is_priority, game.get("name", ""))
 
 class CalendarService:
     def __init__(self, api_key: Optional[str] = None):
@@ -136,6 +222,42 @@ class CalendarService:
             cal_date_str = game_item.get("calendar_date")
             precision = game_item.get("precision", "TBA")
 
+            # Doble guardián: detectar placeholders de Steam que se hayan guardado como EXACT_DAY
+            raw_text = str(game_item.get("raw_date_str", "")).lower()
+            if precision == "EXACT_DAY" and cal_date_str:
+                try:
+                    dt_val = datetime.date.fromisoformat(cal_date_str)
+                    # 1. Placeholder de Año: cae en 1 de enero sin mención explícita al día en el texto
+                    if dt_val.month == 1 and dt_val.day == 1 and dt_val.year >= 2026:
+                        if not any(k in raw_text for k in ["1 de", "1st", "01 de", "jan 1", "ene 1"]):
+                            precision = "YEAR"
+                            cal_date_str = None
+                            game_item["precision"] = "YEAR"
+                            game_item["calendar_date"] = None
+                            game_item["display_badge"] = f"Año {dt_val.year}"
+
+                    # 2. Placeholder de Trimestre Q4: cae en 1 de diciembre
+                    elif dt_val.day == 1 and dt_val.month == 12 and dt_val.year >= 2026:
+                        if raw_text == cal_date_str or "trimestre" in raw_text or "q4" in raw_text or not any(k in raw_text for k in ["1 de", "1st", "01 de", "dec 1", "dic 1"]):
+                            precision = "QUARTER"
+                            cal_date_str = None
+                            game_item["precision"] = "QUARTER"
+                            game_item["calendar_date"] = None
+                            game_item["display_badge"] = f"Q4 {dt_val.year}"
+
+                    # 3. Placeholder de Trimestre Q1, Q2, Q3
+                    elif dt_val.day == 1 and dt_val.month in [3, 6, 9] and dt_val.year >= 2026:
+                        q_map = {3: 1, 6: 2, 9: 3}
+                        q_num = q_map[dt_val.month]
+                        if raw_text == cal_date_str or "trimestre" in raw_text or f"q{q_num}" in raw_text or not any(k in raw_text for k in ["1 de", "1st", "01 de"]):
+                            precision = "QUARTER"
+                            cal_date_str = None
+                            game_item["precision"] = "QUARTER"
+                            game_item["calendar_date"] = None
+                            game_item["display_badge"] = f"Q{q_num} {dt_val.year}"
+                except ValueError:
+                    pass
+
             if precision == "EXACT_DAY" and cal_date_str:
                 try:
                     dt_val = datetime.date.fromisoformat(cal_date_str)
@@ -151,8 +273,16 @@ class CalendarService:
                         days_map[cal_date_str].append(game_item)
                     # Juegos lanzados hace más de 14 días se descartan (no saturan la bandeja)
                 except ValueError:
+                    end_dt = get_fuzzy_end_date(game_item)
+                    cutoff_date = (today - datetime.timedelta(days=14)) if include_past else today
+                    if end_dt and end_dt < cutoff_date:
+                        continue
                     fuzzy_list.append(game_item)
             else:
+                end_dt = get_fuzzy_end_date(game_item)
+                cutoff_date = (today - datetime.timedelta(days=14)) if include_past else today
+                if end_dt and end_dt < cutoff_date:
+                    continue
                 fuzzy_list.append(game_item)
 
         # Ordenar días cronológicamente
@@ -170,13 +300,9 @@ class CalendarService:
                 "games": sorted(days_map[d_str], key=lambda x: (not (x["is_wishlisted"] or x.get("is_owned")), x["name"]))
             })
 
-        # Ordenar fechas difusas
-        fuzzy_priority = {"MONTH": 1, "QUARTER": 2, "YEAR": 3, "TBA": 4}
-        sorted_fuzzy = sorted(fuzzy_list, key=lambda x: (
-            fuzzy_priority.get(x.get("precision"), 5),
-            not (x["is_wishlisted"] or x.get("is_owned")),
-            x.get("display_badge", "")
-        ))
+        # Ordenar fechas difusas en orden estrictamente cronológico:
+        # 1. Año (2026, 2027...) -> 2. Trimestre/Mes -> 3. Prioridad de usuario -> 4. Nombre
+        sorted_fuzzy = sorted(fuzzy_list, key=get_fuzzy_sort_key)
 
         all_games = [g for d in timeline_days for g in d["games"]] + sorted_fuzzy
         total_release_1_0 = sum(1 for g in all_games if g.get("release_category") == "RELEASE_1_0")

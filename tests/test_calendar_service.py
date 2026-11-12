@@ -193,6 +193,48 @@ def test_calendar_service_with_library_owned_games():
     assert "BEGIN:VCALENDAR" in ical_owned
     assert "steam-game-" + str(sample_appid) in ical_owned
 
+def test_fuzzy_tray_placement_for_years_and_quarters():
+    """Verifica que juegos fechados para un Año o Trimestre se ubiquen en la bandeja lateral (fuzzy_tray) y no en la línea temporal."""
+    service = CalendarService()
+    cal = service.get_personal_calendar()
+
+    timeline_dates = [d["date_iso"] for d in cal["timeline_days"]]
+    # Ningún día de la línea temporal debe ser un placeholder del 1 de enero o 1 de diciembre de 2027
+    assert "2027-01-01" not in timeline_dates
+    assert "2027-12-01" not in timeline_dates
+
+    # Verificar que los juegos con Año o Trimestre se ubiquen en fuzzy_tray
+    fuzzy_games = cal["fuzzy_tray"]
+    year_games = [g for g in fuzzy_games if g.get("precision") == "YEAR"]
+    quarter_games = [g for g in fuzzy_games if g.get("precision") == "QUARTER"]
+
+    assert len(year_games) > 0
+    assert len(quarter_games) > 0
+    for yg in year_games:
+        assert yg["calendar_date"] is None
+        assert "Año" in yg["display_badge"]
+    for qg in quarter_games:
+        assert qg["calendar_date"] is None
+        assert "Q" in qg["display_badge"]
+
+    # Verificar que periodos pasados no aparezcan en la bandeja de próximos lanzamientos
+    past_quarter_badges = [g["display_badge"] for g in fuzzy_games if g.get("display_badge") in ["Q1 2026", "Q2 2026", "Q3 2026"]]
+    assert len(past_quarter_badges) == 0, f"Ventanas pasadas encontradas en fuzzy tray: {past_quarter_badges}"
+
+    # Verificar ordenación cronológica estricta:
+    # Si existen títulos para Año 2026 y Q1 2027, Año 2026 debe figurar antes que Q1 2027
+    idx_2026 = next((i for i, g in enumerate(fuzzy_games) if "2026" in str(g.get("display_badge"))), None)
+    idx_q1_2027 = next((i for i, g in enumerate(fuzzy_games) if g.get("display_badge") == "Q1 2027"), None)
+    idx_q4_2027 = next((i for i, g in enumerate(fuzzy_games) if g.get("display_badge") == "Q4 2027"), None)
+    idx_year_2027 = next((i for i, g in enumerate(fuzzy_games) if g.get("display_badge") == "Año 2027"), None)
+
+    if idx_2026 is not None and idx_q1_2027 is not None:
+        assert idx_2026 < idx_q1_2027, "Los títulos de 2026 deben aparecer antes que los de 2027"
+    if idx_q1_2027 is not None and idx_q4_2027 is not None:
+        assert idx_q1_2027 < idx_q4_2027, "Q1 2027 debe aparecer antes que Q4 2027"
+    if idx_q4_2027 is not None and idx_year_2027 is not None:
+        assert idx_q4_2027 < idx_year_2027, "Q4 2027 debe aparecer antes que los títulos sin trimestre fijado (Año 2027)"
+
 def test_no_hardcoded_games_in_app():
     import os
     import re

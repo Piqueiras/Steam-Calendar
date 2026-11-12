@@ -170,6 +170,20 @@ def _extract_tags(it: Dict[str, Any], is_dlc: bool, is_ea: bool, rel_cat: str = 
 
     return tags[:5]
 
+def _extract_date_info(rel: Dict[str, Any]) -> Dict[str, Any]:
+    """Extrae y normaliza la información de fecha respetando estilos de EA y Coming Soon."""
+    ts = rel.get("release_from_early_access_date") or rel.get("steam_release_date")
+    custom_msg = rel.get("custom_release_date_message")
+    display_type = rel.get("coming_soon_display")
+
+    if rel.get("release_from_early_access_date"):
+        ea_style = rel.get("release_from_early_access_style")
+        style_map = {1: "date_full", 2: "date_month", 3: "date_quarter", 4: "date_year", 5: "text_tba"}
+        ea_display = style_map.get(ea_style) or display_type
+        return parse_steam_date(raw_date=custom_msg, timestamp=ts, display_type=ea_display)
+    else:
+        return parse_steam_date(raw_date=custom_msg, timestamp=ts, display_type=display_type)
+
 class SteamClient:
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key or get_active_steam_api_key()
@@ -227,18 +241,7 @@ class SteamClient:
 
                                 name = it.get("name", f"App {appid}")
                                 rel = it.get("release", {})
-                                ts = rel.get("release_from_early_access_date") or rel.get("steam_release_date")
-                                custom_msg = rel.get("custom_release_date_message")
-                                display_type = rel.get("coming_soon_display")
-
-                                if rel.get("release_from_early_access_date"):
-                                    date_info = parse_steam_date("", timestamp=ts)
-                                else:
-                                    date_info = parse_steam_date(
-                                        raw_date=custom_msg,
-                                        timestamp=ts,
-                                        display_type=display_type
-                                    )
+                                date_info = _extract_date_info(rel)
 
                                 # Identificación real de DLC mediante la API oficial de Steam
                                 type_id = it.get("type", 0)
@@ -322,7 +325,7 @@ class SteamClient:
                             if not ts:
                                 continue
 
-                            date_info = parse_steam_date("", timestamp=ts)
+                            date_info = _extract_date_info(rel)
                             type_id = it.get("type", 0)
                             rel_items = it.get("related_items", {})
                             parent_appid = rel_items.get("parent_appid")
@@ -397,18 +400,7 @@ class SteamClient:
                                     continue
 
                                 rel = it.get("release", {})
-                                ts = rel.get("release_from_early_access_date") or rel.get("steam_release_date")
-                                custom_msg = rel.get("custom_release_date_message")
-                                display_type = rel.get("coming_soon_display")
-
-                                if rel.get("release_from_early_access_date"):
-                                    date_info = parse_steam_date("", timestamp=ts)
-                                else:
-                                    date_info = parse_steam_date(
-                                        raw_date=custom_msg,
-                                        timestamp=ts,
-                                        display_type=display_type
-                                    )
+                                date_info = _extract_date_info(rel)
 
                                 type_id = it.get("type", 0)
                                 rel_items = it.get("related_items", {})
@@ -547,18 +539,7 @@ class SteamClient:
                                 continue
 
                             rel = it.get("release", {})
-                            ts = rel.get("release_from_early_access_date") or rel.get("steam_release_date")
-                            custom_msg = rel.get("custom_release_date_message")
-                            display_type = rel.get("coming_soon_display")
-
-                            if rel.get("release_from_early_access_date"):
-                                date_info = parse_steam_date("", timestamp=ts)
-                            else:
-                                date_info = parse_steam_date(
-                                    raw_date=custom_msg,
-                                    timestamp=ts,
-                                    display_type=display_type
-                                )
+                            date_info = _extract_date_info(rel)
 
                             header_url, capsule_url = _extract_asset_urls(it, appid)
 
@@ -785,14 +766,14 @@ class SteamClient:
 
         # 1. ¿Tiene fecha oficial de salida de Early Access en la API de Valve?
         if ea_10_ts:
-            dt = datetime.datetime.fromtimestamp(ea_10_ts, tz=datetime.timezone.utc)
-            cal_date = dt.strftime("%Y-%m-%d")
+            parsed = _extract_date_info(rel)
             return {
                 "appid": appid,
                 "name": name,
-                "calendar_date": cal_date,
-                "raw_date_str": dt.strftime("%d %b %Y"),
-                "precision": "EXACT_DAY",
+                "calendar_date": parsed["calendar_date"],
+                "raw_date_str": parsed["raw_date_str"],
+                "precision": parsed["precision"],
+                "display_badge": parsed["display_badge"],
                 "release_category": "RELEASE_1_0",
                 "is_early_access": True,
                 "leaving_early_access": True,
