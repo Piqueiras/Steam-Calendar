@@ -378,3 +378,28 @@ def test_no_hardcoded_games_in_app():
                     content = file.read().lower()
                     for term in forbidden_terms:
                         assert term not in content, f"Término hardcodeado '{term}' encontrado en {f}"
+
+def test_adult_content_and_dlc_filtering():
+    from app.calendar_service import has_adult_tags
+
+    # 1. Juego +18 con 'desnudos', 'contenido sexual' o 'hentai' entre sus primeras etiquetas
+    assert has_adult_tags(["Contenido sexual", "Hentai", "Desnudos"]) is True
+    assert has_adult_tags(["Acción", "Aventura", "Desnudos"]) is True
+    assert has_adult_tags(["Novelas visuales", "Sexual Content"]) is True
+
+    # 2. Juego convencional como The Witcher 3 (con RPG, Mundo abierto, etc. entre sus principales)
+    assert has_adult_tags(["Mundo abierto", "Rol", "Buena trama", "Ambientales", "Fantasía"]) is False
+    assert has_adult_tags(["Estrategia", "Simulación", "Ciencia ficción"]) is False
+
+    # 3. Propagación de flag is_nsfw en el calendario
+    service = CalendarService()
+    cal = service.get_personal_calendar(include_past=True)
+    all_games = [g for d in cal["timeline_days"] for g in d["games"]] + cal["fuzzy_tray"]
+
+    for g in all_games:
+        assert "is_nsfw" in g
+        assert isinstance(g["is_nsfw"], bool)
+
+    # 4. Export iCal con filtros de DLC no poseído y NSFW
+    ics_filtered = service.export_ical_feed(hide_unowned_dlc=True, hide_nsfw=True)
+    assert "BEGIN:VCALENDAR" in ics_filtered

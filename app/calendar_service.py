@@ -20,6 +20,21 @@ MONTH_NAMES_ES = [
     "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"
 ]
 
+ADULT_TAG_KEYWORDS = (
+    "desnud", "nudity", "contenido sexual", "sexual content", "sexual themes",
+    "hentai", "erótic", "erotic", "nsfw", "adult only", "adulto"
+)
+
+def has_adult_tags(tags: List[str]) -> bool:
+    """Detecta si alguna de las etiquetas principales contiene palabras clave de contenido +18."""
+    if not tags:
+        return False
+    for t in tags:
+        t_low = t.lower()
+        if any(kw in t_low for kw in ADULT_TAG_KEYWORDS):
+            return True
+    return False
+
 def format_day_header(dt: datetime.date, today: datetime.date) -> str:
     """Devuelve un encabezado amigable como 'Hoy', 'Mañana' o 'Viernes, 14 de Noviembre'."""
     delta = (dt - today).days
@@ -158,27 +173,33 @@ class CalendarService:
             library_games = get_user_library_games(steam_id)
             user_owned_appids = set(g["appid"] for g in library_games)
 
-            # Sincronizar detalles tanto para deseados como para juegos comprados en la biblioteca
-            user_target_appids = list(wishlist_ids.union(user_owned_appids))
-            if user_target_appids:
-                cached_appids_set = set(g["appid"] for g in cached_games)
-                missing_appids = [aid for aid in user_target_appids if aid not in cached_appids_set]
-                stale_appids = [
-                    g["appid"] for g in cached_games 
-                    if g["appid"] in user_target_appids and (
-                        g.get("tags") in [["Juego en Seguimiento"], ["Próximo Estreno"], []]
-                    )
-                ][:50]
-                to_fetch = list(set(missing_appids[:100] + stale_appids))
-                if to_fetch:
-                    synced_games = self.steam_client.fetch_wishlist_games_details(to_fetch)
-                    if synced_games:
-                        save_games_batch(synced_games)
-                        cached_games = get_cached_games()
+        # Sincronizar detalles tanto para deseados como para juegos comprados en la biblioteca
+        user_target_appids = list(wishlist_ids.union(user_owned_appids)) if steam_id else []
+        cached_appids_set = set(g["appid"] for g in cached_games)
+        missing_appids = [aid for aid in user_target_appids if aid not in cached_appids_set]
+
+        # Detectar juegos que aún tengan tags incompletos o marcadores de posición para auto-enriquecerlos
+        stale_appids = [
+            g["appid"] for g in cached_games 
+            if not g.get("tags") or g.get("tags") in [["Juego Oficial"], ["Destacado"], ["Próximo Estreno"], ["Juego en Seguimiento"], []]
+        ][:50]
+
+        to_fetch = list(set(missing_appids[:50] + stale_appids))
+        if to_fetch and self.steam_client.api_key:
+            synced_games = self.steam_client.fetch_wishlist_games_details(to_fetch)
+            if synced_games:
+                save_games_batch(synced_games)
+                cached_games = get_cached_games()
 
         today = datetime.date.today()
         days_map: Dict[str, List[Dict[str, Any]]] = {}
         fuzzy_list: List[Dict[str, Any]] = []
+
+        # Mapa para propagar rápidamente etiquetas +18 de juegos base a sus DLCs
+        is_game_adult_map: Dict[int, bool] = {}
+        for g in cached_games:
+            tags = g.get("tags") or []
+            is_game_adult_map[g["appid"]] = has_adult_tags(tags)
 
         for g in cached_games:
             game_item = dict(g)
@@ -193,6 +214,15 @@ class CalendarService:
 
             is_wishlisted = appid in wishlist_ids
             is_owned = appid in user_owned_appids
+
+            # Detección de contenido +18 (desnudos, contenido sexual, hentai en etiquetas principales o en su juego base)
+            self_is_adult = is_game_adult_map.get(appid, False)
+            parent_is_adult = bool(parent_appid and is_game_adult_map.get(parent_appid, False))
+            is_nsfw = self_is_adult or parent_is_adult
+            if not is_nsfw:
+                name_low = str(game_item.get("name", "")).lower()
+                if any(kw in name_low for kw in ["hentai", "futa", "porn", "xxx"]):
+                    is_nsfw = True
 
             # Normalización y detección de la categoría del lanzamiento
             rel_cat = game_item.get("release_category")
@@ -212,6 +242,7 @@ class CalendarService:
             game_item["is_owned"] = is_owned
             game_item["is_dlc"] = is_dlc
             game_item["is_owned_base_game"] = is_dlc_owned
+            game_item["is_nsfw"] = is_nsfw
             game_item["release_category"] = rel_cat
             game_item["is_early_access"] = is_ea
             game_item["review_score_label"] = game_item.get("review_score_label")
@@ -333,7 +364,15 @@ class CalendarService:
             }
         }
 
-    def export_ical_feed(self, steam_id: Optional[str] = None, wishlist_only: bool = False, library_only: bool = False, include_past: bool = False) -> str:
+    def export_ical_feed(
+        self,
+        steam_id: Optional[str] = None,
+        wishlist_only: bool = False,
+        library_only: bool = False,
+        include_past: bool = False,
+        hide_unowned_dlc: bool = False,
+        hide_nsfw: bool = False
+    ) -> str:
         """Genera un feed iCalendar (.ics) estándar RFC 5545 para suscripción externa."""
         cal_data = self.get_personal_calendar(steam_id=steam_id, include_past=include_past)
         
@@ -350,6 +389,12 @@ class CalendarService:
                     continue
                 if library_only and not g.get("is_owned"):
                     continue
+                if hide_nsfw and g.get("is_nsfw"):
+                    continue
+                if hide_unowned_dlc:
+                    is_dlc = g.get("is_dlc") or g.get("release_category") == "DLC" or bool(g.get("parent_appid"))
+                    if is_dlc and not g.get("is_owned_base_game"):
+                        continue
 
                 event = Event()
                 prefix = ""

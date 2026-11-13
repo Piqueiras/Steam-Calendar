@@ -7,12 +7,18 @@ let calendarData = {
 
 let currentFilter = 'all'; // 'all', 'wishlist', 'dlc', 'deck'
 let includePast = false;
+let hideUnownedDlc = localStorage.getItem('steam_calendar_hide_unowned_dlc') === 'true';
+let hideNsfw = localStorage.getItem('steam_calendar_hide_nsfw') === 'true';
 let currentViewMode = localStorage.getItem('steam_calendar_view_mode') || 'detailed';
 let accordionOpenDays = new Set();
 let accordionInitialized = false;
 
 document.addEventListener('DOMContentLoaded', () => {
     updateViewModeButtons();
+    const chkDlc = document.getElementById('check-hide-unowned-dlc');
+    if (chkDlc) chkDlc.checked = hideUnownedDlc;
+    const chkNsfw = document.getElementById('check-hide-nsfw');
+    if (chkNsfw) chkNsfw.checked = hideNsfw;
     loadCalendarData();
 });
 
@@ -47,6 +53,36 @@ function toggleIncludePast() {
     loadCalendarData();
 }
 
+function toggleHideUnownedDlc() {
+    const chk = document.getElementById('check-hide-unowned-dlc');
+    hideUnownedDlc = chk ? chk.checked : false;
+    try {
+        localStorage.setItem('steam_calendar_hide_unowned_dlc', hideUnownedDlc ? 'true' : 'false');
+    } catch (e) {}
+    updateStatsCounts();
+    renderCalendar();
+    renderFuzzyTray();
+}
+
+function toggleHideNsfw() {
+    const chk = document.getElementById('check-hide-nsfw');
+    hideNsfw = chk ? chk.checked : false;
+    try {
+        localStorage.setItem('steam_calendar_hide_nsfw', hideNsfw ? 'true' : 'false');
+    } catch (e) {}
+    updateStatsCounts();
+    renderCalendar();
+    renderFuzzyTray();
+}
+
+function isGameNsfw(g) {
+    if (g.is_nsfw !== undefined) return Boolean(g.is_nsfw);
+    const adultKws = ['desnud', 'nudity', 'contenido sexual', 'sexual content', 'sexual themes', 'hentai', 'erótic', 'erotic', 'nsfw', 'adult only'];
+    const tagsStr = (g.tags || []).join(' ').toLowerCase();
+    const nameStr = (g.name || '').toLowerCase();
+    return adultKws.some(kw => tagsStr.includes(kw) || (kw === 'hentai' && nameStr.includes(kw)));
+}
+
 // Actualiza los contadores de las pestañas
 function updateStatsCounts() {
     let totalAll = 0;
@@ -55,23 +91,35 @@ function updateStatsCounts() {
     let totalDlc = 0;
     let totalRelease10 = 0;
     let totalFirstRelease = 0;
+    let totalFuzzy = 0;
 
-    const countGame = (g) => {
-        totalAll++;
-        if (g.is_wishlisted) totalWishlist++;
-        if (g.is_owned) totalLibrary++; // Juegos comprados que posees en tu biblioteca
-        if (g.is_owned_base_game) totalDlc++; // Solo cuenta DLCs cuyo juego base esté en la biblioteca del usuario
-        if (g.release_category === 'RELEASE_1_0') totalRelease10++;
-        if (g.release_category === 'FIRST_RELEASE') totalFirstRelease++;
+    const countGame = (g, isFuzzy = false) => {
+        // Si está oculto por +18, no contabilizar en los contadores visibles
+        if (hideNsfw && isGameNsfw(g)) return;
+
+        const isDlc = g.is_dlc || g.release_category === 'DLC' || Boolean(g.parent_appid);
+        const isUnownedDlc = isDlc && !g.is_owned_base_game;
+
+        if (!hideUnownedDlc || !isUnownedDlc) {
+            totalAll++;
+            if (g.is_wishlisted) totalWishlist++;
+            if (g.is_owned) totalLibrary++; // Juegos comprados que posees en tu biblioteca
+            if (g.release_category === 'RELEASE_1_0') totalRelease10++;
+            if (g.release_category === 'FIRST_RELEASE') totalFirstRelease++;
+            if (isFuzzy) totalFuzzy++;
+        }
+
+        // Pestaña DLC: solo cuenta DLCs cuyo juego base esté en la biblioteca del usuario
+        if (g.is_owned_base_game) totalDlc++;
     };
 
     // Contar juegos en días exactos
     calendarData.timeline_days.forEach(day => {
-        day.games.forEach(countGame);
+        day.games.forEach(g => countGame(g, false));
     });
 
     // Contar juegos en bandeja difusa
-    calendarData.fuzzy_tray.forEach(countGame);
+    calendarData.fuzzy_tray.forEach(g => countGame(g, true));
 
     const setEl = (id, val) => {
         const el = document.getElementById(id);
@@ -84,7 +132,7 @@ function updateStatsCounts() {
     setEl('count-dlc', totalDlc);
     setEl('count-release-10', totalRelease10);
     setEl('count-first-release', totalFirstRelease);
-    setEl('count-fuzzy', calendarData.fuzzy_tray.length);
+    setEl('count-fuzzy', totalFuzzy);
     setEl('total-days-label', `${calendarData.timeline_days.length} días con estrenos confirmados`);
 }
 
@@ -265,6 +313,15 @@ function renderCalendar() {
             if (currentFilter === 'release-10' && g.release_category !== 'RELEASE_1_0') return false;
             if (currentFilter === 'first-release' && g.release_category !== 'FIRST_RELEASE') return false;
             if (currentFilter === 'deck' && !['VERIFIED', 'PLAYABLE'].includes(g.deck_status)) return false;
+
+            // Filtro de Ocultar +18 (desnudos, contenido sexual, hentai)
+            if (hideNsfw && isGameNsfw(g)) return false;
+
+            // Filtro de Ocultar DLCs no poseídos (no aplica a la pestaña específica de tus DLCs)
+            if (hideUnownedDlc && currentFilter !== 'dlc') {
+                const isDlc = g.is_dlc || g.release_category === 'DLC' || Boolean(g.parent_appid);
+                if (isDlc && !g.is_owned_base_game) return false;
+            }
 
             if (searchQuery) {
                 const nameMatch = g.name.toLowerCase().includes(searchQuery);
@@ -652,6 +709,15 @@ function renderFuzzyTray() {
         if (currentFilter === 'release-10' && g.release_category !== 'RELEASE_1_0') return false;
         if (currentFilter === 'first-release' && g.release_category !== 'FIRST_RELEASE') return false;
         if (currentFilter === 'deck' && !['VERIFIED', 'PLAYABLE'].includes(g.deck_status)) return false;
+
+        // Filtro de Ocultar +18 (desnudos, contenido sexual, hentai)
+        if (hideNsfw && isGameNsfw(g)) return false;
+
+        // Filtro de Ocultar DLCs no poseídos (no aplica a la pestaña específica de tus DLCs)
+        if (hideUnownedDlc && currentFilter !== 'dlc') {
+            const isDlc = g.is_dlc || g.release_category === 'DLC' || Boolean(g.parent_appid);
+            if (isDlc && !g.is_owned_base_game) return false;
+        }
 
         if (searchQuery) {
             const nameMatch = g.name.toLowerCase().includes(searchQuery);

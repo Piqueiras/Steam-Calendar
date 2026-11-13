@@ -142,7 +142,15 @@ def api_export_ics():
     steam_id = session.get("steam_id") or request.args.get("steam_id")
     wishlist_only = request.args.get("wishlist_only", "0") in ["1", "true", "True"]
     library_only = request.args.get("library_only", "0") in ["1", "true", "True"]
-    ics_content = calendar_service.export_ical_feed(steam_id=steam_id, wishlist_only=wishlist_only, library_only=library_only)
+    hide_unowned_dlc = request.args.get("hide_unowned_dlc", "0") in ["1", "true", "True"]
+    hide_nsfw = request.args.get("hide_nsfw", "0") in ["1", "true", "True"]
+    ics_content = calendar_service.export_ical_feed(
+        steam_id=steam_id,
+        wishlist_only=wishlist_only,
+        library_only=library_only,
+        hide_unowned_dlc=hide_unowned_dlc,
+        hide_nsfw=hide_nsfw
+    )
     
     return Response(
         ics_content,

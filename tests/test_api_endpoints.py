@@ -84,3 +84,5 @@ def test_view_mode_elements():
     assert 'id="view-mode-featured"' in html
     assert 'id="view-mode-compressed"' in html
     assert 'id="btn-toggle-all-accordions"' in html
+    assert 'id="check-hide-unowned-dlc"' in html
+    assert 'id="check-hide-nsfw"' in html

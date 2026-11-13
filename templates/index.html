@@ -79,6 +79,16 @@
             <input type="checkbox" id="check-include-past" onchange="toggleIncludePast()" class="rounded bg-[#0e141b] border-gray-600 text-[#66c0f4] focus:ring-0">
             <span>Ver lanzamientos recientes (últimas 2 semanas)</span>
         </label>
+
+        <label class="flex items-center space-x-1.5 text-xs text-gray-300 cursor-pointer bg-[#1b2838] hover:bg-[#223549] px-3 py-1.5 rounded border border-[#2a3844] transition-all" title="Oculta DLCs de juegos que no tienes en tu biblioteca (no aplica a la pestaña de tus DLCs)">
+            <input type="checkbox" id="check-hide-unowned-dlc" onchange="toggleHideUnownedDlc()" class="rounded bg-[#0e141b] border-gray-600 text-[#66c0f4] focus:ring-0">
+            <span>Ocultar DLCs no poseídos</span>
+        </label>
+
+        <label class="flex items-center space-x-1.5 text-xs text-gray-300 cursor-pointer bg-[#1b2838] hover:bg-[#223549] px-3 py-1.5 rounded border border-[#2a3844] transition-all" title="Oculta juegos y DLCs con etiquetas principales de desnudos, contenido sexual o hentai">
+            <input type="checkbox" id="check-hide-nsfw" onchange="toggleHideNsfw()" class="rounded bg-[#0e141b] border-gray-600 text-[#66c0f4] focus:ring-0">
+            <span>Ocultar +18</span>
+        </label>
     </div>
 
     <!-- BUSCADOR EN VIVO -->
