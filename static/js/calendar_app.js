@@ -7,8 +7,12 @@ let calendarData = {
 
 let currentFilter = 'all'; // 'all', 'wishlist', 'dlc', 'deck'
 let includePast = false;
+let currentViewMode = localStorage.getItem('steam_calendar_view_mode') || 'detailed';
+let accordionOpenDays = new Set();
+let accordionInitialized = false;
 
 document.addEventListener('DOMContentLoaded', () => {
+    updateViewModeButtons();
     loadCalendarData();
 });
 
@@ -84,12 +88,171 @@ function updateStatsCounts() {
     setEl('total-days-label', `${calendarData.timeline_days.length} días con estrenos confirmados`);
 }
 
-// Renderizado de la línea temporal día a día
+// Control de modos de visualización (Completo / Top 3 / Comprimido)
+function setViewMode(mode) {
+    if (!['detailed', 'featured', 'compressed'].includes(mode)) mode = 'detailed';
+    currentViewMode = mode;
+    try {
+        localStorage.setItem('steam_calendar_view_mode', mode);
+    } catch (e) {}
+    updateViewModeButtons();
+    renderCalendar();
+}
+
+function updateViewModeButtons() {
+    ['detailed', 'featured', 'compressed'].forEach(m => {
+        const btn = document.getElementById(`view-mode-${m}`);
+        if (btn) {
+            if (m === currentViewMode) {
+                btn.classList.add('active', 'text-white', 'bg-[#2a475e]');
+                btn.classList.remove('text-gray-400');
+            } else {
+                btn.classList.remove('active', 'text-white', 'bg-[#2a475e]');
+                btn.classList.add('text-gray-400');
+            }
+        }
+    });
+
+    const toggleAllBtn = document.getElementById('btn-toggle-all-accordions');
+    if (toggleAllBtn) {
+        if (currentViewMode === 'compressed') {
+            toggleAllBtn.classList.remove('hidden');
+            toggleAllBtn.classList.add('inline-flex');
+            updateToggleAllButtonLabel();
+        } else {
+            toggleAllBtn.classList.add('hidden');
+            toggleAllBtn.classList.remove('inline-flex');
+        }
+    }
+}
+
+function toggleDayAccordion(dateIso) {
+    const extraGrid = document.getElementById(`games-day-extra-${dateIso}`);
+    const chevron = document.getElementById(`chevron-${dateIso}`);
+    const btnIcon = document.getElementById(`day-accordion-btn-icon-${dateIso}`);
+    const btnText = document.getElementById(`day-accordion-btn-text-${dateIso}`);
+    const countSpan = document.getElementById(`day-count-${dateIso}`);
+    if (!extraGrid) return;
+
+    const totalCount = extraGrid.dataset.total || '';
+    const extraCount = extraGrid.dataset.count || '';
+
+    if (accordionOpenDays.has(dateIso)) {
+        accordionOpenDays.delete(dateIso);
+        extraGrid.classList.add('hidden');
+        if (chevron) chevron.classList.remove('rotate-180');
+        if (btnIcon) btnIcon.innerText = '▼';
+        if (btnText) btnText.innerText = `Ver los ${extraCount} estrenos restantes`;
+        if (countSpan) countSpan.innerText = `Mostrando 6 de ${totalCount} estrenos`;
+    } else {
+        accordionOpenDays.add(dateIso);
+        extraGrid.classList.remove('hidden');
+        if (chevron) chevron.classList.add('rotate-180');
+        if (btnIcon) btnIcon.innerText = '▲';
+        if (btnText) btnText.innerText = 'Mostrar solo la primera hilera';
+        if (countSpan) countSpan.innerText = `${totalCount} estrenos`;
+    }
+    updateToggleAllButtonLabel();
+}
+
+function toggleAllAccordions() {
+    const extraGrids = document.querySelectorAll('[id^="games-day-extra-"]');
+    const expandableDays = [];
+    extraGrids.forEach(el => {
+        const dateIso = el.id.replace('games-day-extra-', '');
+        expandableDays.push(dateIso);
+    });
+
+    if (expandableDays.length === 0) return;
+
+    const anyClosed = expandableDays.some(d => !accordionOpenDays.has(d));
+    if (anyClosed) {
+        expandableDays.forEach(d => accordionOpenDays.add(d));
+    } else {
+        expandableDays.forEach(d => accordionOpenDays.delete(d));
+    }
+
+    expandableDays.forEach(d => {
+        const extraGrid = document.getElementById(`games-day-extra-${d}`);
+        const chevron = document.getElementById(`chevron-${d}`);
+        const btnIcon = document.getElementById(`day-accordion-btn-icon-${d}`);
+        const btnText = document.getElementById(`day-accordion-btn-text-${d}`);
+        const countSpan = document.getElementById(`day-count-${d}`);
+        const isOpen = accordionOpenDays.has(d);
+        if (extraGrid) {
+            const totalCount = extraGrid.dataset.total || '';
+            const extraCount = extraGrid.dataset.count || '';
+            if (isOpen) {
+                extraGrid.classList.remove('hidden');
+                if (btnIcon) btnIcon.innerText = '▲';
+                if (btnText) btnText.innerText = 'Mostrar solo la primera hilera';
+                if (countSpan) countSpan.innerText = `${totalCount} estrenos`;
+            } else {
+                extraGrid.classList.add('hidden');
+                if (btnIcon) btnIcon.innerText = '▼';
+                if (btnText) btnText.innerText = `Ver los ${extraCount} estrenos restantes`;
+                if (countSpan) countSpan.innerText = `Mostrando 6 de ${totalCount} estrenos`;
+            }
+        }
+        if (chevron) {
+            if (isOpen) chevron.classList.add('rotate-180');
+            else chevron.classList.remove('rotate-180');
+        }
+    });
+
+    updateToggleAllButtonLabel();
+}
+
+function updateToggleAllButtonLabel() {
+    const label = document.getElementById('label-toggle-all');
+    if (!label) return;
+    const extraGrids = document.querySelectorAll('[id^="games-day-extra-"]');
+    if (extraGrids.length === 0) {
+        const toggleAllBtn = document.getElementById('btn-toggle-all-accordions');
+        if (toggleAllBtn) toggleAllBtn.classList.add('hidden');
+        return;
+    }
+    let anyClosed = false;
+    extraGrids.forEach(el => {
+        const dateIso = el.id.replace('games-day-extra-', '');
+        if (!accordionOpenDays.has(dateIso)) {
+            anyClosed = true;
+        }
+    });
+    label.innerText = anyClosed ? 'Expandir todos' : 'Colapsar a 1 hilera';
+}
+
+function toggleDayRemaining(dateIso) {
+    const container = document.getElementById(`day-remaining-${dateIso}`);
+    const btnText = document.getElementById(`day-remaining-btn-text-${dateIso}`);
+    const btnIcon = document.getElementById(`day-remaining-btn-icon-${dateIso}`);
+    if (!container) return;
+
+    if (container.classList.contains('hidden')) {
+        container.classList.remove('hidden');
+        if (btnText) btnText.innerText = 'Ocultar restantes';
+        if (btnIcon) btnIcon.innerText = '➖';
+    } else {
+        container.classList.add('hidden');
+        const count = container.dataset.count || '';
+        if (btnText) btnText.innerText = `Ver los ${count} estrenos restantes de este día`;
+        if (btnIcon) btnIcon.innerText = '➕';
+    }
+}
+
+// Renderizado de la línea temporal día a día según el modo de visualización activo
 function renderCalendar() {
     const container = document.getElementById('timeline-container');
-    const searchQuery = document.getElementById('search-input').value.toLowerCase().trim();
+    const searchQuery = document.getElementById('search-input') ? document.getElementById('search-input').value.toLowerCase().trim() : '';
 
     container.innerHTML = '';
+
+    // Si aún no se inicializó el acordeón en modo comprimido, marcar como inicializado
+    if (!accordionInitialized && calendarData.timeline_days) {
+        accordionInitialized = true;
+    }
+
+    updateViewModeButtons();
 
     let visibleDaysCount = 0;
 
@@ -118,39 +281,145 @@ function renderCalendar() {
 
         // Crear bloque del día
         const dayBlock = document.createElement('div');
-        dayBlock.className = 'bg-[#131a23] rounded-lg border border-[#233140] overflow-hidden shadow-sm';
+        dayBlock.className = 'bg-[#131a23] rounded-lg border border-[#233140] overflow-hidden shadow-sm transition-all';
 
-        // Cabecera del día
         const isToday = day.is_today;
         const headerClass = isToday 
             ? 'bg-gradient-to-r from-[#1e3b52] to-[#172533] border-b border-[#3b82f6]/40' 
             : 'bg-[#1a232f] border-b border-[#233140]';
 
-        dayBlock.innerHTML = `
-            <div class="${headerClass} px-4 py-2.5 flex items-center justify-between">
-                <div class="flex items-center space-x-2">
-                    <span class="text-xs font-bold uppercase tracking-wider ${isToday ? 'text-[#66c0f4]' : 'text-gray-200'}">
-                        ${day.header_label}
-                    </span>
-                    <span class="text-[11px] text-gray-400 font-medium">(${day.formatted_date})</span>
-                    ${isToday ? '<span class="text-[10px] bg-[#3b82f6] text-white px-1.5 py-0.5 rounded font-bold uppercase">Hoy</span>' : ''}
+        if (currentViewMode === 'compressed') {
+            const firstRowGames = filteredGames.slice(0, 6);
+            const extraGames = filteredGames.slice(6);
+            const hasExtra = extraGames.length > 0;
+            const isOpen = hasExtra && accordionOpenDays.has(day.date_iso);
+
+            const counterHtml = hasExtra && !isOpen 
+                ? `<span class="text-[11px] text-gray-400 font-medium" id="day-count-${day.date_iso}">Mostrando 6 de ${filteredGames.length} estrenos</span>` 
+                : `<span class="text-[11px] text-gray-400 font-medium" id="day-count-${day.date_iso}">${filteredGames.length} ${filteredGames.length === 1 ? 'estreno' : 'estrenos'}</span>`;
+
+            dayBlock.innerHTML = `
+                <div ${hasExtra ? `onclick="toggleDayAccordion('${day.date_iso}')"` : ''} class="${headerClass} px-4 py-2 flex items-center justify-between ${hasExtra ? 'cursor-pointer select-none hover:bg-[#202d3d] transition-colors' : ''}">
+                    <div class="flex items-center space-x-2.5">
+                        ${hasExtra ? `
+                            <svg id="chevron-${day.date_iso}" class="w-4 h-4 text-gray-400 accordion-chevron ${isOpen ? 'rotate-180' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                            </svg>
+                        ` : '<span class="w-1.5 h-1.5 rounded-full bg-[#66c0f4]/50 ml-1 mr-1.5"></span>'}
+                        <span class="text-xs font-bold uppercase tracking-wider ${isToday ? 'text-[#66c0f4]' : 'text-gray-200'}">
+                            ${day.header_label}
+                        </span>
+                        <span class="text-[11px] text-gray-400 font-medium">(${day.formatted_date})</span>
+                        ${isToday ? '<span class="text-[10px] bg-[#3b82f6] text-white px-1.5 py-0.5 rounded font-bold uppercase">Hoy</span>' : ''}
+                    </div>
+                    ${counterHtml}
                 </div>
-                <span class="text-[11px] text-gray-400 font-medium">
-                    ${filteredGames.length} ${filteredGames.length === 1 ? 'estreno' : 'estrenos'}
-                </span>
-            </div>
-            <div class="p-3.5 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4" id="games-day-${day.date_iso}">
-            </div>
-        `;
+                <div class="p-3">
+                    <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3" id="games-day-${day.date_iso}">
+                    </div>
+                    ${hasExtra ? `
+                        <div id="games-day-extra-${day.date_iso}" data-total="${filteredGames.length}" data-count="${extraGames.length}" class="${isOpen ? '' : 'hidden'} grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3 mt-3 pt-3 border-t border-[#1e2a38]">
+                        </div>
+                        <div class="mt-2.5 text-center">
+                            <button onclick="toggleDayAccordion('${day.date_iso}')" class="text-[11px] text-[#66c0f4] hover:text-white bg-[#101721] hover:bg-[#1a293b] border border-[#1e2f42] px-3.5 py-1 rounded transition-all inline-flex items-center space-x-1.5 shadow-sm">
+                                <span id="day-accordion-btn-icon-${day.date_iso}">${isOpen ? '▲' : '▼'}</span>
+                                <span id="day-accordion-btn-text-${day.date_iso}">${isOpen ? 'Mostrar solo la primera hilera' : `Ver los ${extraGames.length} estrenos restantes`}</span>
+                            </button>
+                        </div>
+                    ` : ''}
+                </div>
+            `;
+            container.appendChild(dayBlock);
 
-        container.appendChild(dayBlock);
+            const gamesGrid = dayBlock.querySelector(`#games-day-${day.date_iso}`);
+            firstRowGames.forEach(g => {
+                gamesGrid.appendChild(createCompressedGameCard(g));
+            });
 
-        // Insertar tarjetas de juegos
-        const gamesGrid = dayBlock.querySelector(`#games-day-${day.date_iso}`);
-        filteredGames.forEach(g => {
-            gamesGrid.appendChild(createGameCard(g));
-        });
+            if (hasExtra) {
+                const extraGrid = dayBlock.querySelector(`#games-day-extra-${day.date_iso}`);
+                extraGames.forEach(g => {
+                    extraGrid.appendChild(createCompressedGameCard(g));
+                });
+            }
+
+        } else if (currentViewMode === 'featured') {
+            const topGames = filteredGames.slice(0, 3);
+            const remainingGames = filteredGames.slice(3);
+            const hasRemaining = remainingGames.length > 0;
+
+            dayBlock.innerHTML = `
+                <div class="${headerClass} px-4 py-2.5 flex items-center justify-between">
+                    <div class="flex items-center space-x-2">
+                        <span class="text-xs font-bold uppercase tracking-wider ${isToday ? 'text-[#66c0f4]' : 'text-gray-200'}">
+                            ${day.header_label}
+                        </span>
+                        <span class="text-[11px] text-gray-400 font-medium">(${day.formatted_date})</span>
+                        ${isToday ? '<span class="text-[10px] bg-[#3b82f6] text-white px-1.5 py-0.5 rounded font-bold uppercase">Hoy</span>' : ''}
+                    </div>
+                    <span class="text-[11px] text-gray-400 font-medium">
+                        ${hasRemaining ? `Top 3 de ${filteredGames.length} estrenos` : `${filteredGames.length} ${filteredGames.length === 1 ? 'estreno' : 'estrenos'}`}
+                    </span>
+                </div>
+                <div class="p-3.5 space-y-3">
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4" id="games-day-${day.date_iso}">
+                    </div>
+                    ${hasRemaining ? `
+                        <div class="pt-2 text-center" id="day-expander-container-${day.date_iso}">
+                            <button onclick="toggleDayRemaining('${day.date_iso}')" class="text-xs text-[#66c0f4] hover:text-white bg-[#172330] hover:bg-[#203347] border border-[#23384c] px-3.5 py-1.5 rounded transition-all inline-flex items-center space-x-1.5 shadow-sm">
+                                <span id="day-remaining-btn-icon-${day.date_iso}">➕</span>
+                                <span id="day-remaining-btn-text-${day.date_iso}">Ver los ${remainingGames.length} estrenos restantes de este día</span>
+                            </button>
+                        </div>
+                        <div id="day-remaining-${day.date_iso}" data-count="${remainingGames.length}" class="hidden pt-3 border-t border-[#233140]/60 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        </div>
+                    ` : ''}
+                </div>
+            `;
+            container.appendChild(dayBlock);
+
+            const gamesGrid = dayBlock.querySelector(`#games-day-${day.date_iso}`);
+            topGames.forEach(g => {
+                gamesGrid.appendChild(createGameCard(g, true));
+            });
+
+            if (hasRemaining) {
+                const remainingGrid = dayBlock.querySelector(`#day-remaining-${day.date_iso}`);
+                remainingGames.forEach(g => {
+                    remainingGrid.appendChild(createGameCard(g, true));
+                });
+            }
+
+        } else {
+            // Modo detallado (por defecto)
+            dayBlock.innerHTML = `
+                <div class="${headerClass} px-4 py-2.5 flex items-center justify-between">
+                    <div class="flex items-center space-x-2">
+                        <span class="text-xs font-bold uppercase tracking-wider ${isToday ? 'text-[#66c0f4]' : 'text-gray-200'}">
+                            ${day.header_label}
+                        </span>
+                        <span class="text-[11px] text-gray-400 font-medium">(${day.formatted_date})</span>
+                        ${isToday ? '<span class="text-[10px] bg-[#3b82f6] text-white px-1.5 py-0.5 rounded font-bold uppercase">Hoy</span>' : ''}
+                    </div>
+                    <span class="text-[11px] text-gray-400 font-medium">
+                        ${filteredGames.length} ${filteredGames.length === 1 ? 'estreno' : 'estrenos'}
+                    </span>
+                </div>
+                <div class="p-3.5 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4" id="games-day-${day.date_iso}">
+                </div>
+            `;
+            container.appendChild(dayBlock);
+
+            const gamesGrid = dayBlock.querySelector(`#games-day-${day.date_iso}`);
+            filteredGames.forEach(g => {
+                gamesGrid.appendChild(createGameCard(g));
+            });
+        }
     });
+
+    if (currentViewMode === 'compressed') {
+        updateToggleAllButtonLabel();
+    }
 
     if (visibleDaysCount === 0) {
         container.innerHTML = `
@@ -161,8 +430,46 @@ function renderCalendar() {
     }
 }
 
+// Crea una tarjeta de juego compacta para el modo comprimido (solo imagen, nombre y badges sutiles)
+function createCompressedGameCard(g) {
+    const card = document.createElement('a');
+    card.href = g.steam_store_url;
+    card.target = '_blank';
+    card.className = 'compressed-game-card group bg-[#171d25] rounded border border-[#233140] hover:border-[#66c0f4] p-2 flex flex-col justify-between overflow-hidden relative shadow-sm hover:shadow-md transition-all';
+
+    const followersText = g.follower_count ? ` · 👥 ${g.follower_count.toLocaleString()} seg.` : '';
+    const priceText = g.price_str ? ` · 💰 ${g.price_str}` : '';
+    const scoreText = g.review_percent !== null && g.review_percent !== undefined && g.review_count > 0 ? ` · 👍 ${g.review_percent}%` : '';
+    card.title = `${g.name}${followersText}${priceText}${scoreText}`;
+
+    let cornerBadge = '';
+    if (g.is_wishlisted) {
+        cornerBadge = '<span class="badge-wishlist text-[9px] px-1.5 py-0.5 rounded shadow absolute top-2 left-2 z-10" title="En tu Wishlist">⭐</span>';
+    } else if (g.is_owned) {
+        cornerBadge = '<span class="badge-library text-[9px] px-1.5 py-0.5 rounded shadow absolute top-2 left-2 z-10" title="En tu Biblioteca">📚</span>';
+    } else if (g.is_owned_base_game) {
+        cornerBadge = '<span class="badge-dlc text-[9px] px-1.5 py-0.5 rounded shadow absolute top-2 left-2 z-10" title="DLC de tu Biblioteca">📦</span>';
+    } else if (g.release_category === 'RELEASE_1_0') {
+        cornerBadge = '<span class="badge-release-10 text-[9px] px-1.5 py-0.5 rounded shadow absolute top-2 left-2 z-10" title="Lanzamiento 1.0">🚀</span>';
+    }
+
+    card.innerHTML = `
+        <div class="relative overflow-hidden rounded bg-[#0e141b] aspect-[16/9] mb-1.5">
+            <img src="${g.capsule_image || g.header_image}" alt="${g.name}" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200" onerror="this.onerror=null; this.src='https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/${g.appid}/header.jpg';">
+            ${cornerBadge}
+        </div>
+        <div class="flex-grow flex items-center">
+            <span class="text-xs font-semibold text-gray-200 group-hover:text-[#66c0f4] line-clamp-2 leading-tight transition-colors">
+                ${g.name}
+            </span>
+        </div>
+    `;
+
+    return card;
+}
+
 // Crea una tarjeta de juego individual
-function createGameCard(g) {
+function createGameCard(g, isFeatured = false) {
     const card = document.createElement('div');
     card.className = 'game-card rounded flex flex-col justify-between overflow-hidden relative';
 
@@ -284,9 +591,13 @@ function createGameCard(g) {
         priceHtml = `<span class="text-xs font-semibold ${isUnconf ? 'text-gray-400' : 'text-gray-200'}">${g.price_str || 'Por confirmar'}</span>`;
     }
 
+    const imgClass = isFeatured 
+        ? 'w-full top3-game-image aspect-[616/353] object-cover bg-[#0e141b]' 
+        : 'w-full h-48 object-cover bg-[#0e141b]';
+
     card.innerHTML = `
         <div class="relative">
-            <img src="${g.capsule_image || g.header_image}" alt="${g.name}" class="w-full h-48 object-cover bg-[#0e141b]" onerror="this.onerror=null; this.src='https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/${g.appid}/header.jpg';">
+            <img src="${g.capsule_image || g.header_image}" alt="${g.name}" class="${imgClass}" onerror="this.onerror=null; this.src='https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/${g.appid}/header.jpg';">
             
             <div class="absolute top-2 left-2 flex flex-col space-y-1">
                 ${wishlistBadge}

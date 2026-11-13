@@ -369,18 +369,26 @@ def fetch_community_followers(appid: int, client: Optional[httpx.Client] = None)
     """
     url_xml = f"https://steamcommunity.com/games/{appid}/memberslistxml/?xml=1"
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "text/xml,application/xml,application/xhtml+xml,text/html;q=0.9,*/*;q=0.8"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "es-ES,es;q=0.9,en;q=0.8"
     }
     http_client = client or httpx.Client(timeout=8.0, headers=headers, follow_redirects=True)
     close_after = client is None
     try:
-        r = http_client.get(url_xml)
-        if r.status_code == 200:
-            import re
-            m = re.search(r"<memberCount>(\d+)</memberCount>", r.text)
-            if m:
-                return int(m.group(1))
+        import time
+        for attempt in range(2):
+            r = http_client.get(url_xml)
+            if r.status_code == 200:
+                import re
+                m = re.search(r"<memberCount>(\d+)</memberCount>", r.text)
+                if m:
+                    return int(m.group(1))
+                break
+            elif r.status_code == 429:
+                time.sleep(3.0)
+            else:
+                break
 
         # Fallback para juegos con GID personalizado
         r_hub = http_client.get(f"https://steamcommunity.com/app/{appid}")
@@ -1023,6 +1031,7 @@ class SteamClient:
         parent_appid = rel_items.get("parent_appid")
         is_dlc = type_id in [1, 4] or bool(parent_appid)
         price_str, is_free, disc_pct, orig_price = _extract_price(item or {})
+        followers = fetch_community_followers(appid)
 
         # 1. ¿Tiene fecha oficial de salida de Early Access en la API de Valve?
         if ea_10_ts:
@@ -1038,6 +1047,7 @@ class SteamClient:
                 "is_early_access": True,
                 "leaving_early_access": True,
                 "tags": _extract_tags(item or {}, is_dlc, is_ea, "RELEASE_1_0"),
+                "follower_count": followers,
                 "price_str": price_str,
                 "is_free": is_free,
                 "discount_pct": disc_pct,
@@ -1071,6 +1081,7 @@ class SteamClient:
                             "is_early_access": True,
                             "leaving_early_access": True,
                             "tags": _extract_tags(item or {}, is_dlc, is_ea, "RELEASE_1_0"),
+                            "follower_count": followers,
                             "price_str": price_str,
                             "is_free": is_free,
                             "discount_pct": disc_pct,
@@ -1095,6 +1106,7 @@ class SteamClient:
             "is_early_access": is_ea,
             "leaving_early_access": False,
             "tags": _extract_tags(item or {}, is_dlc, is_ea, rel_cat),
+            "follower_count": followers,
             "price_str": price_str,
             "is_free": is_free,
             "discount_pct": disc_pct,

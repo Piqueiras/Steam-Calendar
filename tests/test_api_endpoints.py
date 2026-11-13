@@ -74,3 +74,13 @@ def test_routes():
     res_inspect_bad = client.get("/api/game/inspect?target=not_an_app")
     assert res_inspect_bad.status_code == 200
     assert "error" in json.loads(res_inspect_bad.data)
+
+def test_view_mode_elements():
+    client = app.test_client()
+    res = client.get("/")
+    assert res.status_code == 200
+    html = res.data.decode("utf-8")
+    assert 'id="view-mode-detailed"' in html
+    assert 'id="view-mode-featured"' in html
+    assert 'id="view-mode-compressed"' in html
+    assert 'id="btn-toggle-all-accordions"' in html

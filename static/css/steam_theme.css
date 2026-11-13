@@ -111,3 +111,43 @@
     color: #ffffff !important;
     border-color: #66c0f4 !important;
 }
+
+/* Modos de visualización del calendario */
+.view-mode-btn {
+    border: 1px solid transparent;
+}
+
+.view-mode-btn.active {
+    background-color: #2a475e !important;
+    color: #ffffff !important;
+    border-color: #66c0f4 !important;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+}
+
+/* Tarjeta en modo comprimido */
+.compressed-game-card {
+    transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.compressed-game-card:hover {
+    border-color: #66c0f4;
+    transform: translateY(-2px);
+    box-shadow: 0 6px 14px rgba(0, 0, 0, 0.6);
+}
+
+/* Transición para el chevron de los acordeones */
+.accordion-chevron {
+    transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.accordion-chevron.rotate-180 {
+    transform: rotate(180deg);
+}
+
+/* Imágenes de juegos para modo Top 3 (proporción 616x353 nativa de Steam para que quepan por completo) */
+.top3-game-image {
+    aspect-ratio: 616 / 353;
+    width: 100%;
+    object-fit: cover;
+    background-color: #0e141b;
+}

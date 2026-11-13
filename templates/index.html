@@ -96,12 +96,35 @@
     <!-- COLUMNA PRINCIPAL: LÍNEA TEMPORAL DÍA POR DÍA -->
     <div class="lg:col-span-8 xl:col-span-8 2xl:col-span-9 space-y-6">
         
-        <div class="flex items-center justify-between pb-2 border-b border-[#233140]">
-            <h2 class="text-sm font-bold uppercase tracking-wider text-white flex items-center space-x-2">
+        <div class="flex flex-wrap items-center justify-between gap-3 pb-2 border-b border-[#233140]">
+            <div class="flex items-center space-x-2">
                 <span class="w-2.5 h-2.5 rounded-sm bg-[#66c0f4]"></span>
-                <span>Línea Temporal de Lanzamientos (Día por Día)</span>
-            </h2>
-            <span class="text-xs text-gray-400" id="total-days-label">Cargando días...</span>
+                <h2 class="text-sm font-bold uppercase tracking-wider text-white">Línea Temporal de Lanzamientos</h2>
+                <span class="text-xs text-gray-400" id="total-days-label">(Cargando...)</span>
+            </div>
+
+            <!-- SELECTOR DE MODOS DE VISUALIZACIÓN -->
+            <div class="flex items-center space-x-2">
+                <div class="inline-flex rounded-md p-0.5 bg-[#0e141b] border border-[#2a3844] text-xs">
+                    <button id="view-mode-detailed" onclick="setViewMode('detailed')" title="Vista completa con todos los detalles (etiquetas, análisis, precio, seguidores)" class="view-mode-btn px-2.5 py-1 rounded font-medium flex items-center space-x-1 transition-all text-white bg-[#2a475e]">
+                        <span>🗂️</span>
+                        <span class="hidden sm:inline">Completo</span>
+                    </button>
+                    <button id="view-mode-featured" onclick="setViewMode('featured')" title="Top 3 lanzamientos con más seguidores por día" class="view-mode-btn px-2.5 py-1 rounded font-medium flex items-center space-x-1 transition-all text-gray-400 hover:text-white">
+                        <span>⭐</span>
+                        <span class="hidden sm:inline">Top 3</span>
+                    </button>
+                    <button id="view-mode-compressed" onclick="setViewMode('compressed')" title="Días en acordeón con vista condensada de imagen y título" class="view-mode-btn px-2.5 py-1 rounded font-medium flex items-center space-x-1 transition-all text-gray-400 hover:text-white">
+                        <span>📑</span>
+                        <span class="hidden sm:inline">Comprimido</span>
+                    </button>
+                </div>
+
+                <!-- BOTÓN EXPANDIR / COLAPSAR TODOS (Visible solo en modo comprimido) -->
+                <button id="btn-toggle-all-accordions" onclick="toggleAllAccordions()" class="hidden text-xs px-2.5 py-1 rounded bg-[#1b2838] hover:bg-[#223549] border border-[#2a3844] text-gray-300 hover:text-white items-center space-x-1 transition-all">
+                    <span id="label-toggle-all">Colapsar todos</span>
+                </button>
+            </div>
         </div>
 
         <!-- CONTENEDOR DONDE SE PINTAN LOS DÍAS CRONOLÓGICOS -->
